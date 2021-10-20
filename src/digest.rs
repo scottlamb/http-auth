@@ -75,6 +75,7 @@ impl std::ops::BitAnd<Qop> for QopSet {
 ///     but I'd be surprised to see a server that uses it. It appears to require the server
 ///     to perform `O(users)` cryptographic operations to find the correct user to operate on.
 ///     Needless to say, that's unrealistic with a large authentication database.
+/// *   Supports RFC 2069 compatibility, even though RFC 7616 drops it.
 #[derive(Eq, PartialEq)]
 pub struct DigestClient {
     /// Holds unescaped versions of all string fields.
@@ -101,6 +102,7 @@ pub struct DigestClient {
     // Non-string fields. See respective methods' doc comments for more information.
     algorithm: Algorithm,
     stale: bool,
+    rfc2069_compat: bool,
     qop: QopSet,
     nc: u32,
 }
@@ -156,6 +158,13 @@ impl DigestClient {
     #[inline]
     pub fn stale(&self) -> bool {
         self.stale
+    }
+
+    /// Returns true if using RFC 2069 compatibility mode, in which the
+    /// `request-digest` is calculated without the nonce count, conce, or qop.
+    #[inline]
+    pub fn rfc2069_compat(&self) -> bool {
+        self.rfc2069_compat
     }
 
     /// Returns the algorithm used to produce the digest and an unkeyed digest.
@@ -239,19 +248,31 @@ impl DigestClient {
             Ok(h) => h,
             Err(_) => unreachable!(),
         };
-        let response = self.algorithm.h(&[
-            h_a1.as_bytes(),
-            b":",
-            self.nonce().as_bytes(),
-            b":",
-            &hex_nc[..],
-            b":",
-            cnonce.as_bytes(),
-            b":",
-            qop.as_str().as_bytes(),
-            b":",
-            h_a2.as_bytes(),
-        ]);
+
+        // https://datatracker.ietf.org/doc/html/rfc2617#section-3.2.2.1
+        let response = if self.rfc2069_compat {
+            self.algorithm.h(&[
+                h_a1.as_bytes(),
+                b":",
+                self.nonce().as_bytes(),
+                b":",
+                h_a2.as_bytes(),
+            ])
+        } else {
+            self.algorithm.h(&[
+                h_a1.as_bytes(),
+                b":",
+                self.nonce().as_bytes(),
+                b":",
+                &hex_nc[..],
+                b":",
+                cnonce.as_bytes(),
+                b":",
+                qop.as_str().as_bytes(),
+                b":",
+                h_a2.as_bytes(),
+            ])
+        };
 
         let mut out = String::with_capacity(128);
         out.push_str("Digest ");
@@ -262,11 +283,13 @@ impl DigestClient {
         }
         append_quoted_key_value(&mut out, "realm", self.realm())?;
         append_quoted_key_value(&mut out, "uri", p.uri)?;
-        append_unquoted_key_value(&mut out, "algorithm", self.algorithm.as_str());
         append_quoted_key_value(&mut out, "nonce", self.nonce())?;
-        append_unquoted_key_value(&mut out, "nc", str_hex_nc);
-        append_quoted_key_value(&mut out, "cnonce", cnonce)?;
-        append_unquoted_key_value(&mut out, "qop", qop.as_str());
+        if !self.rfc2069_compat {
+            append_unquoted_key_value(&mut out, "algorithm", self.algorithm.as_str());
+            append_unquoted_key_value(&mut out, "nc", str_hex_nc);
+            append_quoted_key_value(&mut out, "cnonce", cnonce)?;
+            append_unquoted_key_value(&mut out, "qop", qop.as_str());
+        }
         append_quoted_key_value(&mut out, "response", &response)?;
         if let Some(o) = self.opaque() {
             append_quoted_key_value(&mut out, "opaque", o)?;
@@ -340,7 +363,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         let nonce_start = buf.len();
         nonce.append_unescaped(&mut buf);
         let mut qop = QopSet(0);
-        if let Some(qop_str) = qop_str {
+        let rfc2069_compat = if let Some(qop_str) = qop_str {
             let qop_start = buf.len();
             qop_str.append_unescaped(&mut buf);
             let qop_str = &buf[qop_start..];
@@ -356,11 +379,13 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
                 return Err(format!("no supported qop in {:?}", qop_str));
             }
             buf.truncate(qop_start);
+            false
         } else {
             // An absent qop is treated as "auth", according to
             // https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.3
             qop.0 |= Qop::Auth as u8;
-        }
+            true
+        };
         Ok(DigestClient {
             buf,
             domain_start: domain_start as u32,
@@ -369,6 +394,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             algorithm,
             stale,
             qop,
+            rfc2069_compat,
             nc: 0,
         })
     }
@@ -384,6 +410,7 @@ impl std::fmt::Debug for DigestClient {
             .field("algorithm", &self.algorithm)
             .field("stale", &self.stale)
             .field("qop", &self.qop)
+            .field("rfc2069_compat", &self.rfc2069_compat)
             .field("nc", &self.nc)
             .finish()
     }
@@ -517,6 +544,7 @@ fn new_random_cnonce() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     /// Tests the example from [RFC 7616 section 3.9.1: SHA-256 and
     /// MD5](https://datatracker.ietf.org/doc/html/rfc7616#section-3.9.1).
@@ -570,8 +598,8 @@ mod tests {
             "Digest username=\"Mufasa\", \
                     realm=\"http-auth@example.org\", \
                     uri=\"/dir/index.html\", \
-                    algorithm=SHA-256, \
                     nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+                    algorithm=SHA-256, \
                     nc=00000001, \
                     cnonce=\"f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ\", \
                     qop=auth, \
@@ -589,8 +617,8 @@ mod tests {
             "Digest username=\"Mufasa\", \
                     realm=\"http-auth@example.org\", \
                     uri=\"/dir/index.html\", \
-                    algorithm=MD5, \
                     nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+                    algorithm=MD5, \
                     nc=00000001, \
                     cnonce=\"f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ\", \
                     qop=auth, \
@@ -654,8 +682,8 @@ mod tests {
             username*=UTF-8''J%C3%A4s%C3%B8n%20Doe, \
             realm=\"api@example.org\", \
             uri=\"/doe.json\", \
-            algorithm=SHA-512-256, \
             nonce=\"5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK\", \
+            algorithm=SHA-512-256, \
             nc=00000001, \
             cnonce=\"NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v\", \
             qop=auth, \
@@ -666,15 +694,42 @@ mod tests {
     }
 
     #[test]
-    fn parse_without_qop() {
-        // Taken from a Dahua IP camera.
-        let www_authenticate = r#"Digest realm="Login to 5b869cf2b0663ca6c9ef962b9c2b2d13", nonce="c1a1c7b72f95215ed839f6ecd16d35f0""#;
+    fn rfc2069() {
+        // https://datatracker.ietf.org/doc/html/rfc2069#section-2.4
+        // The response there is wrong! See https://www.rfc-editor.org/errata/eid749
+        let www_authenticate = "\
+            Digest \
+            realm=\"testrealm@host.com\", \
+            nonce=\"dcd98b7102dd2f0e8b11d0f600bfb0c093\", \
+            opaque=\"5ccc069c403ebaf9f0171e9517f40e41\"";
         let challenges = dbg!(crate::parse_challenges(www_authenticate).unwrap());
         assert_eq!(challenges.len(), 1);
         let ctxs: Result<Vec<_>, _> = challenges.iter().map(DigestClient::try_from).collect();
-        let ctxs = dbg!(ctxs.unwrap());
+        let mut ctxs = dbg!(ctxs.unwrap());
         assert_eq!(ctxs.len(), 1);
         assert_eq!(ctxs[0].qop.0, Qop::Auth as u8);
+        assert_eq!(ctxs[0].rfc2069_compat, true);
+        let params = crate::PasswordParams {
+            username: "Mufasa",
+            password: "CircleOfLife",
+            uri: "/dir/index.html",
+            body: None,
+            method: "GET",
+        };
+        assert_eq!(
+            &mut ctxs[0]
+                .respond_with_testing_cnonce(&params, "unused")
+                .unwrap(),
+            "\
+            Digest \
+            username=\"Mufasa\", \
+            realm=\"testrealm@host.com\", \
+            uri=\"/dir/index.html\", \
+            nonce=\"dcd98b7102dd2f0e8b11d0f600bfb0c093\", \
+            response=\"1949323746fe6a43ef61f9606e7febea\", \
+            opaque=\"5ccc069c403ebaf9f0171e9517f40e41\"",
+        );
+        assert_eq!(ctxs[0].nc, 1);
     }
 
     // See sizes with: cargo test -- --nocapture digest::tests::size
