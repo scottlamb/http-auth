@@ -152,7 +152,7 @@ impl PasswordClientBuilder {
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub fn header_value(mut self, value: &http::HeaderValue) -> Self {
-        if matches!(self.cur_client, Some(PasswordClient::Digest(_))) {
+        if self.complete() {
             return self;
         }
 
@@ -168,10 +168,22 @@ impl PasswordClientBuilder {
         self
     }
 
+    /// Returns true if no more challenges need to be examined.
+    #[cfg(feature = "digest-scheme")]
+    fn complete(&self) -> bool {
+        matches!(self.cur_client, Some(PasswordClient::Digest(_)))
+    }
+
+    /// Returns true if no more challenges need to be examined.
+    #[cfg(not(feature = "digest-scheme"))]
+    fn complete(&self) -> bool {
+        matches!(self.cur_client, Some(_))
+    }
+
     /// Considers all challenges from the given `&str` challenge list.
     pub fn challenges(mut self, value: &str) -> Self {
         let mut parser = ChallengeParser::new(value);
-        while !matches!(self.cur_client, Some(PasswordClient::Digest(_))) {
+        while !self.complete() {
             match parser.next() {
                 Some(Ok(c)) => self = self.challenge(&c),
                 Some(Err(e)) => {
@@ -187,7 +199,7 @@ impl PasswordClientBuilder {
 
     /// Considers a single challenge.
     pub fn challenge(mut self, challenge: &ChallengeRef<'_>) -> Self {
-        if matches!(self.cur_client, Some(PasswordClient::Digest(_))) {
+        if self.complete() {
             return self;
         }
 
