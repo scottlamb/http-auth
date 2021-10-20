@@ -316,7 +316,6 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             }
         }
         let realm = realm.ok_or("missing required parameter realm")?;
-        let qop_str = qop_str.ok_or("missing required parameter qop")?;
         let nonce = nonce.ok_or("missing required parameter nonce")?;
         if buf_len > u32::MAX as usize {
             // Incredibly unlikely, but just for completeness.
@@ -340,22 +339,28 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         }
         let nonce_start = buf.len();
         nonce.append_unescaped(&mut buf);
-        let qop_start = buf.len();
-        qop_str.append_unescaped(&mut buf);
-        let qop_str = &buf[qop_start..];
         let mut qop = QopSet(0);
-        for v in qop_str.split(',') {
-            let v = v.trim();
-            if v.eq_ignore_ascii_case("auth") {
-                qop.0 |= Qop::Auth as u8;
-            } else if v.eq_ignore_ascii_case("auth-int") {
-                qop.0 |= Qop::AuthInt as u8;
+        if let Some(qop_str) = qop_str {
+            let qop_start = buf.len();
+            qop_str.append_unescaped(&mut buf);
+            let qop_str = &buf[qop_start..];
+            for v in qop_str.split(',') {
+                let v = v.trim();
+                if v.eq_ignore_ascii_case("auth") {
+                    qop.0 |= Qop::Auth as u8;
+                } else if v.eq_ignore_ascii_case("auth-int") {
+                    qop.0 |= Qop::AuthInt as u8;
+                }
             }
+            if qop.0 == 0 {
+                return Err(format!("no supported qop in {:?}", qop_str));
+            }
+            buf.truncate(qop_start);
+        } else {
+            // An absent qop is treated as "auth", according to
+            // https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.3
+            qop.0 |= Qop::Auth as u8;
         }
-        if qop.0 == 0 {
-            return Err(format!("no supported qop in {:?}", qop_str));
-        }
-        buf.truncate(qop_start);
         Ok(DigestClient {
             buf,
             domain_start: domain_start as u32,
@@ -658,6 +663,18 @@ mod tests {
             opaque=\"HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS\""
         );
         assert_eq!(ctxs[0].nc, 1);
+    }
+
+    #[test]
+    fn parse_without_qop() {
+        // Taken from a Dahua IP camera.
+        let www_authenticate = r#"Digest realm="Login to 5b869cf2b0663ca6c9ef962b9c2b2d13", nonce="c1a1c7b72f95215ed839f6ecd16d35f0""#;
+        let challenges = dbg!(crate::parse_challenges(www_authenticate).unwrap());
+        assert_eq!(challenges.len(), 1);
+        let ctxs: Result<Vec<_>, _> = challenges.iter().map(DigestClient::try_from).collect();
+        let ctxs = dbg!(ctxs.unwrap());
+        assert_eq!(ctxs.len(), 1);
+        assert_eq!(ctxs[0].qop.0, Qop::Auth as u8);
     }
 
     // See sizes with: cargo test -- --nocapture digest::tests::size
