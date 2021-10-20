@@ -1,6 +1,6 @@
 [package]
 name = "http-auth"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT/Apache-2.0"
 readme = "README.md"
 description = "HTTP authentication: parse challenge lists, respond to Basic and Digest challenges. Likely to be extended with server support and additional auth schemes."
