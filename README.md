@@ -1,4 +1,5 @@
 [![crates.io](https://img.shields.io/crates/v/http-auth)](https://crates.io/crates/http-auth)
+[![Released API docs](https://docs.rs/http-auth/badge.svg)](https://docs.rs/http-auth/)
 [![CI](https://github.com/scottlamb/http-auth/workflows/CI/badge.svg)](https://github.com/scottlamb/http-auth/actions?query=workflow%3ACI)
 
 Rust library for HTTP authentication. Parses challenge lists, responds

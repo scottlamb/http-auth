@@ -26,7 +26,9 @@ digest-scheme = ["digest", "hex", "md-5", "rand", "sha2"]
 trace = ["log"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--cfg", "docsrs", "--all-features"]
+# https://docs.rs/about/metadata
+rustdoc-args = ["--cfg", "docsrs"]
+all-features = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
