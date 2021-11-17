@@ -353,7 +353,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                             &self.input[key_pos],
                             ParamValue {
                                 escapes: 0,
-                                raw: &self.input[value_start..self.pos],
+                                escaped: &self.input[value_start..self.pos],
                             },
                         ));
                         self.state = State::PreToken {
@@ -365,7 +365,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                             &self.input[key_pos],
                             ParamValue {
                                 escapes: 0,
-                                raw: &self.input[value_start..self.pos],
+                                escaped: &self.input[value_start..self.pos],
                             },
                         ));
                         self.state = State::PreToken {
@@ -415,7 +415,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                             &self.input[key_pos],
                             ParamValue {
                                 escapes,
-                                raw: &self.input[value_start..self.pos],
+                                escaped: &self.input[value_start..self.pos],
                             },
                         ));
                         self.state = State::PreToken {
@@ -504,7 +504,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                     &self.input[key_pos],
                     ParamValue {
                         escapes: 0,
-                        raw: &self.input[value_start..],
+                        escaped: &self.input[value_start..],
                     },
                 ));
                 return Some(Ok(challenge));

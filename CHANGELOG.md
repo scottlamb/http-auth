@@ -1,3 +1,7 @@
+## unreleased
+
+*   shrink `DigestClient`
+
 ## `v0.1.3` (2021-10-20)
 
 *   fix `docs.rs`

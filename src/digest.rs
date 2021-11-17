@@ -88,10 +88,7 @@ pub struct DigestClient {
     /// 2.  `domain`: `[domain_start, opaque_start)`
     /// 3.  `opaque`: `[opaque_start, nonce_start)`
     /// 4.  `nonce`: `[nonce_start, buf.len())`
-    ///
-    /// `nonce` is last so that future support for parsing the `Authentication-Info` response's
-    /// `next_nonce` field can easily rewrite `nonce` without modifying the other fields.
-    buf: String,
+    buf: Box<str>,
 
     // Positions described in `buf` comment above. See respective methods' doc comments
     // for more information.
@@ -310,6 +307,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             ));
         }
         let mut buf_len = 0;
+        let mut unused_qop_len = 0;
         let mut realm = None;
         let mut domain = None;
         let mut nonce = None;
@@ -329,13 +327,13 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
                 || store_param(k, v, "domain", &mut domain, &mut buf_len)?
                 || store_param(k, v, "nonce", &mut nonce, &mut buf_len)?
                 || store_param(k, v, "opaque", &mut opaque, &mut buf_len)?
-                || store_param(k, v, "qop", &mut qop_str, &mut buf_len)?
+                || store_param(k, v, "qop", &mut qop_str, &mut unused_qop_len)?
             {
                 // Do nothing here.
             } else if k.eq_ignore_ascii_case("stale") {
-                stale = v.raw.eq_ignore_ascii_case("true");
+                stale = v.escaped.eq_ignore_ascii_case("true");
             } else if k.eq_ignore_ascii_case("algorithm") {
-                algorithm = Some(Algorithm::parse(v.raw)?);
+                algorithm = Some(Algorithm::parse(v.escaped)?);
             }
         }
         let realm = realm.ok_or("missing required parameter realm")?;
@@ -351,22 +349,9 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         let algorithm = algorithm.unwrap_or(Algorithm::Md5);
 
         let mut buf = String::with_capacity(buf_len);
-        realm.append_unescaped(&mut buf);
-        let domain_start = buf.len();
-        if let Some(d) = domain {
-            d.append_unescaped(&mut buf);
-        }
-        let opaque_start = buf.len();
-        if let Some(o) = opaque {
-            o.append_unescaped(&mut buf);
-        }
-        let nonce_start = buf.len();
-        nonce.append_unescaped(&mut buf);
         let mut qop = QopSet(0);
         let rfc2069_compat = if let Some(qop_str) = qop_str {
-            let qop_start = buf.len();
-            qop_str.append_unescaped(&mut buf);
-            let qop_str = &buf[qop_start..];
+            let qop_str = qop_str.unescaped_with_scratch(&mut buf);
             for v in qop_str.split(',') {
                 let v = v.trim();
                 if v.eq_ignore_ascii_case("auth") {
@@ -378,7 +363,6 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             if qop.0 == 0 {
                 return Err(format!("no supported qop in {:?}", qop_str));
             }
-            buf.truncate(qop_start);
             false
         } else {
             // An absent qop is treated as "auth", according to
@@ -386,8 +370,20 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             qop.0 |= Qop::Auth as u8;
             true
         };
+        buf.clear();
+        realm.append_unescaped(&mut buf);
+        let domain_start = buf.len();
+        if let Some(d) = domain {
+            d.append_unescaped(&mut buf);
+        }
+        let opaque_start = buf.len();
+        if let Some(o) = opaque {
+            o.append_unescaped(&mut buf);
+        }
+        let nonce_start = buf.len();
+        nonce.append_unescaped(&mut buf);
         Ok(DigestClient {
-            buf,
+            buf: buf.into_boxed_str(),
             domain_start: domain_start as u32,
             opaque_start: opaque_start as u32,
             nonce_start: nonce_start as u32,

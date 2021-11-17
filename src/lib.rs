@@ -417,8 +417,9 @@ pub struct ParamValue<'i> {
     /// The number of backslash escapes in a quoted-text parameter; 0 for a plain token.
     escapes: usize,
 
-    /// The raw string, which must be pure ASCII (no bytes >= 128) and be consistent with `escapes`.
-    raw: &'i str,
+    /// The escaped string, which must be pure ASCII (no bytes >= 128) and be
+    /// consistent with `escapes`.
+    escaped: &'i str,
 }
 
 impl<'i> ParamValue<'i> {
@@ -439,29 +440,32 @@ impl<'i> ParamValue<'i> {
         if memchr::memchr(b'\\', &raw.as_bytes()[pos..]).is_some() {
             panic!("expected {} backslashes in {:?}, are more", escapes, raw);
         }
-        ParamValue { escapes, raw }
+        ParamValue {
+            escapes,
+            escaped: raw,
+        }
     }
 
     /// Appends the unescaped form of this parameter to the supplied string.
-    fn append_unescaped(&self, to: &mut String) {
-        to.reserve(self.raw.len() - self.escapes);
+    pub fn append_unescaped(&self, to: &mut String) {
+        to.reserve(self.escaped.len() - self.escapes);
         let mut first_unwritten = 0;
         for _ in 0..self.escapes {
-            let i = match memchr::memchr(b'\\', &self.raw.as_bytes()[first_unwritten..]) {
+            let i = match memchr::memchr(b'\\', &self.escaped.as_bytes()[first_unwritten..]) {
                 Some(rel_i) => first_unwritten + rel_i,
                 None => panic!("bad ParamValues; not as many backslash escapes as promised"),
             };
-            to.push_str(&self.raw[first_unwritten..i]);
-            to.push_str(&self.raw[i + 1..i + 2]);
+            to.push_str(&self.escaped[first_unwritten..i]);
+            to.push_str(&self.escaped[i + 1..i + 2]);
             first_unwritten = i + 2;
         }
-        to.push_str(&self.raw[first_unwritten..]);
+        to.push_str(&self.escaped[first_unwritten..]);
     }
 
     /// Returns the unescaped length of this parameter; cheap.
     #[inline]
     pub fn unescaped_len(&self) -> usize {
-        self.raw.len() - self.escapes
+        self.escaped.len() - self.escapes
     }
 
     /// Returns the unescaped form of this parameter as a fresh `String`.
@@ -470,11 +474,31 @@ impl<'i> ParamValue<'i> {
         self.append_unescaped(&mut to);
         to
     }
+
+    /// Returns the unescaped form of this parameter, possibly appending it to `scratch`.
+    fn unescaped_with_scratch<'tmp>(&self, scratch: &'tmp mut String) -> &'tmp str
+    where
+        'i: 'tmp,
+    {
+        if self.escapes == 0 {
+            self.escaped
+        } else {
+            let start = scratch.len();
+            self.append_unescaped(scratch);
+            &scratch[start..]
+        }
+    }
+
+    /// Returns the escaped string, unquoted.
+    #[inline]
+    pub fn as_escaped(&self) -> &'i str {
+        self.escaped
+    }
 }
 
 impl<'i> std::fmt::Debug for ParamValue<'i> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\"", self.raw)
+        write!(f, "\"{}\"", self.escaped)
     }
 }
 
@@ -522,7 +546,7 @@ mod tests {
         assert_eq!(
             &ParamValue {
                 escapes: 0,
-                raw: ""
+                escaped: ""
             }
             .to_unescaped(),
             ""
@@ -530,7 +554,7 @@ mod tests {
         assert_eq!(
             &ParamValue {
                 escapes: 0,
-                raw: "foo"
+                escaped: "foo"
             }
             .to_unescaped(),
             "foo"
@@ -538,7 +562,7 @@ mod tests {
         assert_eq!(
             &ParamValue {
                 escapes: 1,
-                raw: "\\foo"
+                escaped: "\\foo"
             }
             .to_unescaped(),
             "foo"
@@ -546,7 +570,7 @@ mod tests {
         assert_eq!(
             &ParamValue {
                 escapes: 1,
-                raw: "fo\\o"
+                escaped: "fo\\o"
             }
             .to_unescaped(),
             "foo"
@@ -554,7 +578,7 @@ mod tests {
         assert_eq!(
             &ParamValue {
                 escapes: 1,
-                raw: "foo\\bar"
+                escaped: "foo\\bar"
             }
             .to_unescaped(),
             "foobar"
@@ -562,7 +586,7 @@ mod tests {
         assert_eq!(
             &ParamValue {
                 escapes: 3,
-                raw: "\\foo\\ba\\r"
+                escaped: "\\foo\\ba\\r"
             }
             .to_unescaped(),
             "foobar"
