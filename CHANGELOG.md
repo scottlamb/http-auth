@@ -1,4 +1,4 @@
-## unreleased
+## `v0.1.4` (2021-11-18)
 
 *   more thorough documentation
 *   shrink `DigestClient`
