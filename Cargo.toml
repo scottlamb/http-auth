@@ -27,6 +27,7 @@ trace = ["log"]
 
 [package.metadata.docs.rs]
 # https://docs.rs/about/metadata
+# To generate docs locally, run: RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features
 rustdoc-args = ["--cfg", "docsrs"]
 all-features = true
 

@@ -1,5 +1,6 @@
 ## unreleased
 
+*   more thorough documentation
 *   shrink `DigestClient`
 *   support `userhash` in `DigestClient`
 *   support `-sess` algorithm variants in `DigestClient`

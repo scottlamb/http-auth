@@ -70,6 +70,11 @@ impl std::ops::BitAnd<Qop> for QopSet {
 ///
 /// ## Implementation notes
 ///
+/// *   Recalculates `H(A1)` on each [`DigestClient::respond`] call. It'd be
+///     more CPU-efficient to calculate `H(A1)` only once by supplying the
+///     username and password at construction time or by caching (username,
+///     password) -> `H(A1)` mappings internally. `DigestClient` prioritizes
+///     simplicity instead.
 /// *   Always responds using `UTF-8`, and thus doesn't use or keep around the `charset`
 ///     parameter. The RFC only allows that parameter to be set to `UTF-8` anyway.
 /// *   Supports [RFC 2069](https://datatracker.ietf.org/doc/html/rfc2069) compatibility as in
@@ -84,17 +89,24 @@ impl std::ops::BitAnd<Qop> for QopSet {
 ///
 /// ## Security considerations
 ///
-/// We strongly advise servers against implementing `Digest`:
+/// We strongly advise *servers* against implementing `Digest`:
 ///
 /// *   It's actively harmful in that it prevents the server from securing their
 ///     password storage via salted password hashes. See [RFC 7616 Section
 ///     5.2](https://datatracker.ietf.org/doc/html/rfc7616#section-5.2).
+///     When your server offers `Digest` authentication, it is advertising that
+///     it stores plaintext passwords!
 /// *   It's no replacement for TLS in terms of protecting confidentiality of
 ///     the password, much less confidentiality of any other information.
 ///
-/// Nonetheless, it's sometimes required for interoperability, e.g. it's
-/// mandated by ONVIF, and some cameras support no other schemes. Thus, we
-/// support it here.
+/// For *clients*, when a server supports both `Digest` and `Basic`, we advise
+/// using `Digest`. It provides (slightly) more confidentiality of passwords
+/// over the wire.
+///
+/// Some servers *only* support `Digest`. E.g.,
+/// [ONVIF](https://www.onvif.org/profiles/specifications/) mandates the
+/// `Digest` scheme. It doesn't prohibit implementing other schemes, but some
+/// cameras meet the specification's requirement and do no more.
 #[derive(Eq, PartialEq)]
 pub struct DigestClient {
     /// Holds unescaped versions of all string fields.
@@ -547,6 +559,9 @@ fn append_quoted_key_value(out: &mut String, key: &str, value: &str) -> Result<(
 
 /// Supported algorithm from the [HTTP Digest Algorithm Values
 /// registry](https://www.iana.org/assignments/http-dig-alg/http-dig-alg.xhtml).
+///
+/// This doesn't store whether the session variant (`<Algorithm>-sess`) was
+/// requested; see [`DigestClient::session`] for that.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Algorithm {

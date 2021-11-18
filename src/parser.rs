@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Parses as in [RFC 7235](https://datatracker.ietf.org/doc/html/rfc7235).
+//!
+//! Most callers don't need to directly parse; see [`crate::PasswordClient`] instead.
 
 // State machine implementation of challenge parsing with a state machine.
 // Nice qualities: predictable performance (no backtracking), low dependencies.
@@ -24,6 +26,36 @@ macro_rules! trace {
 /// Parses a list of challenges as in [RFC
 /// 7235](https://datatracker.ietf.org/doc/html/rfc7235) `Proxy-Authenticate`
 /// or `WWW-Authenticate` header values.
+///
+/// Most callers don't need to directly parse; see [`crate::PasswordClient`] instead.
+///
+/// This is an iterator that parses lazily, returning each challenge as soon as
+/// its end has been found. (Due to the grammar's ambiguous use of commas to
+/// separate both challenges and parameters, a challenge's end is found after
+/// parsing the *following* challenge's scheme name.) On encountering a syntax
+/// error, it yields `Some(Err(_))` and fuses: all subsequent calls to
+/// [`Iterator::next`] will return `None`.
+///
+/// See also the [`crate::parse_challenges`] convenience wrapper.
+///
+/// ## Example
+///
+/// ```rust
+/// use http_auth::{parser::ChallengeParser, ChallengeRef, ParamValue};
+/// let challenges = "UnsupportedSchemeA, Basic realm=\"foo\", error error";
+/// let mut parser = ChallengeParser::new(challenges);
+/// let c = parser.next().unwrap().unwrap();
+/// assert_eq!(c, ChallengeRef {
+///     scheme: "UnsupportedSchemeA",
+///     params: vec![],
+/// });
+/// let c = parser.next().unwrap().unwrap();
+/// assert_eq!(c, ChallengeRef {
+///     scheme: "Basic",
+///     params: vec![("realm", ParamValue::try_from_escaped("foo").unwrap())],
+/// });
+/// let c = parser.next().unwrap().unwrap_err();
+/// ```
 ///
 /// ## Implementation notes
 ///

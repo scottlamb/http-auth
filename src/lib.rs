@@ -16,12 +16,25 @@
 //! This framework is primarily used with HTTP, as suggested by the name. It is
 //! also used by some other protocols such as RTSP.
 //!
-//! Quick example:
+//! ## Cargo Features
+//!
+//! | feature         | default? | description                                     |
+//! |-----------------|----------|-------------------------------------------------|
+//! | `basic-scheme`  | yes      | support for the `Basic` auth scheme             |
+//! | `digest-scheme` | yes      | support for the `Digest` auth scheme            |
+//! | `http`          | no       | convenient conversion from [`http`] crate types |
+//!
+//! ## Example
+//!
+//! In most cases, callers only need to use [`PasswordClient`] and
+//! [`PasswordParams`] to handle `Basic` and `Digest` authentication schemes.
 //!
 //! ```rust
-//! use std::convert::TryFrom;
-//! let WWW_AUTHENTICATE = "UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB";
-//! let mut pw_client = http_auth::PasswordClient::try_from(WWW_AUTHENTICATE).unwrap();
+//! use std::convert::TryFrom as _;
+//! use http_auth::PasswordClient;
+//!
+//! let WWW_AUTHENTICATE_VAL = "UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB";
+//! let mut pw_client = http_auth::PasswordClient::try_from(WWW_AUTHENTICATE_VAL).unwrap();
 //! assert!(matches!(pw_client, http_auth::PasswordClient::Basic(_)));
 //! let response = pw_client.respond(&http_auth::PasswordParams {
 //!     username: "Aladdin",
@@ -32,7 +45,27 @@
 //! }).unwrap();
 //! assert_eq!(response, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
 //! ```
+//!
+//! The `http` feature allows parsing all `WWW-Authenticate` headers within a
+//! [`http::HeaderMap`] in one call.
+//!
+#![cfg_attr(
+    feature = "http",
+    doc = r##"
+```rust
+# use std::convert::TryFrom as _;
+use http::header::{HeaderMap, WWW_AUTHENTICATE};
+# use http_auth::PasswordClient;
 
+let mut headers = HeaderMap::new();
+headers.append(WWW_AUTHENTICATE, "UnsupportedSchemeA".parse().unwrap());
+headers.append(WWW_AUTHENTICATE, "Basic realm=\"foo\", UnsupportedSchemeB".parse().unwrap());
+
+let mut pw_client = PasswordClient::try_from(headers.get_all(WWW_AUTHENTICATE)).unwrap();
+assert!(matches!(pw_client, http_auth::PasswordClient::Basic(_)));
+```
+"##
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::convert::TryFrom;
@@ -78,9 +111,12 @@ fn char_classes(b: u8) -> u8 {
 }
 
 /// Parsed challenge (scheme and body) using references to the original header value.
+/// Produced by [`crate::parser::ChallengeParser`].
 ///
 /// This is not directly useful for responding to a challenge; it's an
-/// intermediary for constructing a [`PasswordClient`] or the like.
+/// intermediary for constructing a client that knows how to respond to a specific
+/// challenge scheme. In most cases, callers should construct a [`PasswordClient`]
+/// without directly using `ChallengeRef`.
 ///
 /// Only supports the param form, not the apocryphal `token68` form, as described
 /// in [`crate::parser::ChallengeParser`].
@@ -92,11 +128,10 @@ pub struct ChallengeRef<'i> {
     /// Zero or more parameters.
     ///
     /// These are represented as a `Vec` of key-value pairs rather than a
-    /// `HashMap`. Given that the parameters are generally only used once when
+    /// map. Given that the parameters are generally only used once when
     /// constructing a challenge client and each challenge only supports a few
     /// parameter types, it's more efficient in terms of CPU usage and code size
-    /// to scan through them directly without constructing a throw-away
-    /// `HashMap`.
+    /// to scan through them directly.
     pub params: Vec<ChallengeParamRef<'i>>,
 }
 
@@ -130,7 +165,18 @@ impl<'i> std::fmt::Debug for ParamsPrinter<'i> {
     }
 }
 
-/// Builds a [`PasswordClient`] from the supplied challenges.
+/// Builds a [`PasswordClient`] from the supplied challenges; create via
+/// [`PasswordClient::builder`].
+///
+/// Often you can just use [`PasswordClient`]'s [`TryFrom`] implementations
+/// to convert from a parsed challenge ([`crate::ChallengeRef`]) or
+/// unparsed challenges (`str`, [`http::header::HeaderValue`], or
+/// [`http::header::GetAll`]).
+///
+/// The builder allows more flexibility. For example, if you are using a HTTP
+/// library which is not based on a `http` crate, you might need to create
+/// a `PasswordClient` from an iterator over multiple `WWW-Authenticate`
+/// headers. You can feed each to [`PasswordClientBuilder::challenges`].
 ///
 /// Prefers `Digest` over `Basic`, consistent with the [RFC 7235 section
 /// 2.1](https://datatracker.ietf.org/doc/html/rfc7235#section-2.1) advice
@@ -141,6 +187,26 @@ impl<'i> std::fmt::Debug for ParamsPrinter<'i> {
 /// 3.7](https://datatracker.ietf.org/doc/html/rfc7616#section-3.7)
 /// advice to "use the first challenge it supports, unless a local policy
 /// dictates otherwise". In the future, it may prioritize by algorithm.
+///
+/// Ignores parse errors as long as there's at least one parseable, supported
+/// challenge.
+///
+/// ## Example
+///
+/// ```rust
+/// use http_auth::PasswordClient;
+/// let client = PasswordClient::builder()
+///     .challenges("UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB")
+///     .challenges("Digest \
+///                  realm=\"http-auth@example.org\", \
+///                  qop=\"auth, auth-int\", \
+///                  algorithm=MD5, \
+///                  nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+///                  opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"")
+///     .build()
+///     .unwrap();
+/// assert!(matches!(client, PasswordClient::Digest(_)));
+/// ```
 #[derive(Default)]
 pub struct PasswordClientBuilder {
     first_err: Option<String>,
@@ -245,6 +311,13 @@ impl PasswordClientBuilder {
 }
 
 /// Client for responding to a password challenge.
+///
+/// Typically created via [`TryFrom`] implementations for a parsed challenge
+/// ([`crate::ChallengeRef`]) or unparsed challenges (`str`,
+/// [`http::header::HeaderValue`], or [`http::header::GetAll`]). See full
+/// example in the [crate-level documentation](crate).
+///
+/// For more complex scenarios, see [`PasswordClientBuilder`].
 #[derive(Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum PasswordClient {
@@ -322,6 +395,8 @@ impl TryFrom<http::header::GetAll<'_, http::HeaderValue>> for PasswordClient {
 
 impl PasswordClient {
     /// Builds a new `PasswordClient`.
+    ///
+    /// See example at [`PasswordClientBuilder`].
     pub fn builder() -> PasswordClientBuilder {
         PasswordClientBuilder::default()
     }
@@ -405,13 +480,41 @@ pub struct PasswordParams<'a> {
 
 /// Parses a list of challenges into a `Vec`.
 ///
-/// This is a shorthand for `parser::ChallengeParser::new(input).collect()`.
+/// Most callers don't need to directly parse; see [`PasswordClient`] instead.
+///
+/// This is a shorthand for `parser::ChallengeParser::new(input).collect()`. Use
+/// [`crate::parser::ChallengeParser`] directly when you want to parse lazily,
+/// avoid allocation, and/or see any well-formed challenges before an error.
+///
+/// ## Example
+///
+/// ```rust
+/// use http_auth::{parse_challenges, ChallengeRef, ParamValue};
+///
+/// // When all challenges are well-formed, returns them.
+/// assert_eq!(
+///     parse_challenges("UnsupportedSchemeA, Basic realm=\"foo\"").unwrap(),
+///     vec![
+///         ChallengeRef {
+///             scheme: "UnsupportedSchemeA",
+///             params: vec![],
+///         },
+///         ChallengeRef {
+///             scheme: "Basic",
+///             params: vec![("realm", ParamValue::try_from_escaped("foo").unwrap())],
+///         },
+///     ],
+/// );
+///
+/// // Returns `Err` if there is a syntax error anywhere in the input.
+/// parse_challenges("UnsupportedSchemeA, Basic realm=\"foo\", error error").unwrap_err();
+/// ```
 #[inline]
 pub fn parse_challenges(input: &str) -> Result<Vec<ChallengeRef>, parser::Error> {
     parser::ChallengeParser::new(input).collect()
 }
 
-/// Parsed parameter value.
+/// Parsed challenge parameter value used within [`ChallengeRef`].
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct ParamValue<'i> {
     /// The number of backslash escapes in a quoted-text parameter; 0 for a plain token.
@@ -423,27 +526,60 @@ pub struct ParamValue<'i> {
 }
 
 impl<'i> ParamValue<'i> {
+    /// Tries to create a new `ParamValue` from an escaped sequence, primarily for testing.
+    ///
+    /// Validates the sequence and counts the number of escapes.
+    pub fn try_from_escaped(escaped: &'i str) -> Result<Self, String> {
+        let mut escapes = 0;
+        let mut pos = 0;
+        while pos < escaped.len() {
+            let slash = memchr::memchr(b'\\', &escaped.as_bytes()[pos..]).map(|off| pos + off);
+            for i in pos..slash.unwrap_or(escaped.len()) {
+                if (char_classes(escaped.as_bytes()[i]) & C_QDTEXT) == 0 {
+                    return Err(format!("{:?} has non-qdtext at byte {}", escaped, i));
+                }
+            }
+            if let Some(slash) = slash {
+                escapes += 1;
+                if escaped.len() <= slash + 1 {
+                    return Err(format!("{:?} ends at a quoted-pair escape", escaped));
+                }
+                if (char_classes(escaped.as_bytes()[slash + 1]) & C_ESCAPABLE) == 0 {
+                    return Err(format!(
+                        "{:?} has an invalid quote-pair escape at byte {}",
+                        escaped,
+                        slash + 1
+                    ));
+                }
+                pos = slash + 2;
+            } else {
+                break;
+            }
+        }
+        Ok(Self { escaped, escapes })
+    }
+
     /// Creates a new param, panicking if invariants are not satisfied.
     /// This not part of the stable API; it's just for the fuzz tester to use.
     #[doc(hidden)]
-    pub fn new(escapes: usize, raw: &'i str) -> Self {
+    pub fn new(escapes: usize, escaped: &'i str) -> Self {
         let mut pos = 0;
         for escape in 0..escapes {
-            match memchr::memchr(b'\\', &raw.as_bytes()[pos..]) {
+            match memchr::memchr(b'\\', &escaped.as_bytes()[pos..]) {
                 Some(rel_pos) => pos += rel_pos + 2,
                 None => panic!(
                     "expected {} backslashes in {:?}, ran out after {}",
-                    escapes, raw, escape
+                    escapes, escaped, escape
                 ),
             };
         }
-        if memchr::memchr(b'\\', &raw.as_bytes()[pos..]).is_some() {
-            panic!("expected {} backslashes in {:?}, are more", escapes, raw);
+        if memchr::memchr(b'\\', &escaped.as_bytes()[pos..]).is_some() {
+            panic!(
+                "expected {} backslashes in {:?}, are more",
+                escapes, escaped
+            );
         }
-        ParamValue {
-            escapes,
-            escaped: raw,
-        }
+        ParamValue { escapes, escaped }
     }
 
     /// Appends the unescaped form of this parameter to the supplied string.
@@ -539,6 +675,27 @@ mod tests {
             assert!(classes & (C_OWS | C_QDTEXT) != C_OWS);
             assert!(classes & (C_QDTEXT | C_ESCAPABLE) != C_QDTEXT);
         }
+    }
+
+    #[test]
+    fn try_from_escaped() {
+        assert_eq!(ParamValue::try_from_escaped("").unwrap().escapes, 0);
+        assert_eq!(ParamValue::try_from_escaped("foo").unwrap().escapes, 0);
+        assert_eq!(ParamValue::try_from_escaped("\\\"").unwrap().escapes, 1);
+        assert_eq!(
+            ParamValue::try_from_escaped("foo\\\"bar").unwrap().escapes,
+            1
+        );
+        assert_eq!(
+            ParamValue::try_from_escaped("foo\\\"bar\\\"baz")
+                .unwrap()
+                .escapes,
+            2
+        );
+        ParamValue::try_from_escaped("\\").unwrap_err(); // ends in slash
+        ParamValue::try_from_escaped("\"").unwrap_err(); // not valid qdtext
+        ParamValue::try_from_escaped("\n").unwrap_err(); // not valid qdtext
+        ParamValue::try_from_escaped("\\\n").unwrap_err(); // not valid escape
     }
 
     #[test]
