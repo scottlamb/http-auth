@@ -75,6 +75,10 @@ impl std::ops::BitAnd<Qop> for QopSet {
 ///     username and password at construction time or by caching (username,
 ///     password) -> `H(A1)` mappings internally. `DigestClient` prioritizes
 ///     simplicity instead.
+/// *   There's no support yet for parsing the `Authentication-Info` and
+///     `Proxy-Authentication-Info` header fields described by [RFC 7616 section
+///     3.5](https://datatracker.ietf.org/doc/html/rfc7616#section-3.5).
+///     PRs welcome!
 /// *   Always responds using `UTF-8`, and thus doesn't use or keep around the `charset`
 ///     parameter. The RFC only allows that parameter to be set to `UTF-8` anyway.
 /// *   Supports [RFC 2069](https://datatracker.ietf.org/doc/html/rfc2069) compatibility as in
