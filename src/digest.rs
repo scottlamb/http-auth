@@ -76,10 +76,11 @@ impl std::ops::BitAnd<Qop> for QopSet {
 ///     [RFC 2617 section 3.2.2.1](https://datatracker.ietf.org/doc/html/rfc2617#section-3.2.2.1),
 ///     even though RFC 7616 drops it. There are still RTSP cameras being sold
 ///     in 2021 that use the RFC 2069-style calculations.
-/// *   Supports RFC 7616 `userhash`, even
-///     though it seems impractical and only marginally
-///     useful. The server must index the userhash for each supported algorithm
-///     or calculate it on-the-fly for all users in the database.
+/// *   Supports RFC 7616 `userhash`, even though it seems impractical and only
+///     marginally useful. The server must index the userhash for each supported
+///     algorithm or calculate it on-the-fly for all users in the database.
+/// *   The `-sess` algorithm variants haven't been tested; there's no example
+///     in the RFCs.
 ///
 /// ## Security considerations
 ///
@@ -117,6 +118,7 @@ pub struct DigestClient {
 
     // Non-string fields. See respective methods' doc comments for more information.
     algorithm: Algorithm,
+    session: bool,
     stale: bool,
     rfc2069_compat: bool,
     userhash: bool,
@@ -193,6 +195,12 @@ impl DigestClient {
         self.algorithm
     }
 
+    /// Returns if the session style `A1` will be used.
+    #[inline]
+    pub fn session(&self) -> bool {
+        self.session
+    }
+
     /// Returns the acceptable `qop` (quality of protection) values.
     #[inline]
     pub fn qop(&self) -> QopSet {
@@ -236,13 +244,22 @@ impl DigestClient {
     /// and have `respond` delegate to the testing version. We don't do that because
     fn respond_inner(&mut self, p: &PasswordParams, cnonce: &str) -> Result<String, String> {
         let realm = self.realm();
-        let h_a1 = self.algorithm.h(&[
+        let mut h_a1 = self.algorithm.h(&[
             p.username.as_bytes(),
             b":",
             realm.as_bytes(),
             b":",
             p.password.as_bytes(),
         ]);
+        if self.session {
+            h_a1 = self.algorithm.h(&[
+                h_a1.as_bytes(),
+                b":",
+                self.nonce().as_bytes(),
+                b":",
+                cnonce.as_bytes(),
+            ]);
+        }
 
         // Select the best available qop and calculate H(A2) as in
         // [https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.3].
@@ -311,7 +328,7 @@ impl DigestClient {
         append_quoted_key_value(&mut out, "uri", p.uri)?;
         append_quoted_key_value(&mut out, "nonce", self.nonce())?;
         if !self.rfc2069_compat {
-            append_unquoted_key_value(&mut out, "algorithm", self.algorithm.as_str());
+            append_unquoted_key_value(&mut out, "algorithm", self.algorithm.as_str(self.session));
             append_unquoted_key_value(&mut out, "nc", str_hex_nc);
             append_quoted_key_value(&mut out, "cnonce", cnonce)?;
             append_unquoted_key_value(&mut out, "qop", qop.as_str());
@@ -343,7 +360,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         let mut nonce = None;
         let mut opaque = None;
         let mut stale = false;
-        let mut algorithm = None;
+        let mut algorithm_and_session = None;
         let mut qop_str = None;
         let mut userhash_str = None;
 
@@ -365,7 +382,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             } else if k.eq_ignore_ascii_case("stale") {
                 stale = v.escaped.eq_ignore_ascii_case("true");
             } else if k.eq_ignore_ascii_case("algorithm") {
-                algorithm = Some(Algorithm::parse(v.escaped)?);
+                algorithm_and_session = Some(Algorithm::parse(v.escaped)?);
             }
         }
         let realm = realm.ok_or("missing required parameter realm")?;
@@ -378,7 +395,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             ));
         }
 
-        let algorithm = algorithm.unwrap_or(Algorithm::Md5);
+        let algorithm_and_session = algorithm_and_session.unwrap_or((Algorithm::Md5, false));
 
         let mut buf = String::with_capacity(buf_len);
         let mut qop = QopSet(0);
@@ -427,7 +444,8 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             domain_start: domain_start as u16,
             opaque_start: opaque_start as u16,
             nonce_start: nonce_start as u16,
-            algorithm,
+            algorithm: algorithm_and_session.0,
+            session: algorithm_and_session.1,
             stale,
             rfc2069_compat,
             userhash,
@@ -444,7 +462,7 @@ impl std::fmt::Debug for DigestClient {
             .field("domain", &self.domain())
             .field("opaque", &self.opaque())
             .field("nonce", &self.nonce())
-            .field("algorithm", &self.algorithm)
+            .field("algorithm", &self.algorithm.as_str(self.session))
             .field("stale", &self.stale)
             .field("qop", &self.qop)
             .field("rfc2069_compat", &self.rfc2069_compat)
@@ -538,23 +556,28 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
-    fn parse(s: &str) -> Result<Self, String> {
-        if s.to_ascii_lowercase() == "md5" {
-            Ok(Algorithm::Md5)
-        } else if s.to_ascii_lowercase() == "sha-256" {
-            Ok(Algorithm::Sha256)
-        } else if s.to_ascii_lowercase() == "sha-512-256" {
-            Ok(Algorithm::Sha512Trunc256)
-        } else {
-            Err(format!("unknown algorithm {:?}", s))
-        }
+    /// Parses a string into a tuple of `Algorithm` and a bool representing
+    /// whether the `-sess` suffix is present.
+    fn parse(s: &str) -> Result<(Self, bool), String> {
+        Ok(match s {
+            "MD5" => (Algorithm::Md5, false),
+            "MD5-sess" => (Algorithm::Md5, true),
+            "SHA-256" => (Algorithm::Sha256, false),
+            "SHA-256-sess" => (Algorithm::Sha256, true),
+            "SHA-512-256" => (Algorithm::Sha512Trunc256, false),
+            "SHA-512-256-sess" => (Algorithm::Sha512Trunc256, true),
+            _ => return Err(format!("unknown algorithm {:?}", s)),
+        })
     }
 
-    fn as_str(&self) -> &'static str {
-        match self {
-            Algorithm::Md5 => "MD5",
-            Algorithm::Sha256 => "SHA-256",
-            Algorithm::Sha512Trunc256 => "SHA-512-256",
+    fn as_str(&self, session: bool) -> &'static str {
+        match (self, session) {
+            (Algorithm::Md5, false) => "MD5",
+            (Algorithm::Md5, true) => "MD5-sess",
+            (Algorithm::Sha256, false) => "SHA-256",
+            (Algorithm::Sha256, true) => "SHA-256-sess",
+            (Algorithm::Sha512Trunc256, false) => "SHA-512-256",
+            (Algorithm::Sha512Trunc256, true) => "SHA-512-256-sess",
         }
     }
 
@@ -661,6 +684,66 @@ mod tests {
                     cnonce=\"f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ\", \
                     qop=auth, \
                     response=\"8ca523f5e9506fed4657c9700eebdbec\", \
+                    opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\""
+        );
+        assert_eq!(ctxs[1].nc, 1);
+    }
+
+    /// Tests a made-up example with `MD5-sess`. There's no example in the RFC,
+    /// and these values haven't been tested against any other implementation.
+    /// But having the test here ensures we don't accidentally change the
+    /// algorithm.
+    #[test]
+    fn md5_sess() {
+        let www_authenticate = "\
+            Digest \
+            realm=\"http-auth@example.org\", \
+            qop=\"auth, auth-int\", \
+            algorithm=MD5-sess, \
+            nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+            opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"";
+        let challenges = dbg!(crate::parse_challenges(www_authenticate).unwrap());
+        assert_eq!(challenges.len(), 1);
+        let ctxs: Result<Vec<_>, _> = challenges.iter().map(DigestClient::try_from).collect();
+        let mut ctxs = dbg!(ctxs.unwrap());
+        assert_eq!(ctxs[0].realm(), "http-auth@example.org");
+        assert_eq!(ctxs[0].domain(), "");
+        assert_eq!(
+            ctxs[0].nonce(),
+            "7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v"
+        );
+        assert_eq!(
+            ctxs[0].opaque(),
+            Some("FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS")
+        );
+        assert_eq!(ctxs[0].stale(), false);
+        assert_eq!(ctxs[0].algorithm(), Algorithm::Md5);
+        assert_eq!(ctxs[0].session(), true);
+        assert_eq!(ctxs[0].qop().0, (Qop::Auth as u8) | (Qop::AuthInt as u8));
+        assert_eq!(ctxs[0].nonce_count(), 0);
+        let params = crate::PasswordParams {
+            username: "Mufasa",
+            password: "Circle of Life",
+            uri: "/dir/index.html",
+            body: None,
+            method: "GET",
+        };
+        assert_eq!(
+            &mut ctxs[0]
+                .respond_with_testing_cnonce(
+                    &params,
+                    "f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ"
+                )
+                .unwrap(),
+            "Digest username=\"Mufasa\", \
+                    realm=\"http-auth@example.org\", \
+                    uri=\"/dir/index.html\", \
+                    nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+                    algorithm=MD5-sess, \
+                    nc=00000001, \
+                    cnonce=\"f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ\", \
+                    qop=auth, \
+                    response=\"e783283f46242139c486a698fec7211d\", \
                     opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\""
         );
         assert_eq!(ctxs[0].nc, 1);
