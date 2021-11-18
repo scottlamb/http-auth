@@ -68,14 +68,32 @@ impl std::ops::BitAnd<Qop> for QopSet {
 /// Most of the information here is taken from the `WWW-Authenticate` or
 /// `Proxy-Authenticate` header. This also internally maintains a nonce counter.
 ///
-/// Implementation notes:
+/// ## Implementation notes
+///
 /// *   Always responds using `UTF-8`, and thus doesn't use or keep around the `charset`
 ///     parameter. The RFC only allows that parameter to be set to `UTF-8` anyway.
-/// *   Doesn't support `userhash`. This option is simple enough for a client to implement,
-///     but I'd be surprised to see a server that uses it. It appears to require the server
-///     to perform `O(users)` cryptographic operations to find the correct user to operate on.
-///     Needless to say, that's unrealistic with a large authentication database.
-/// *   Supports RFC 2069 compatibility, even though RFC 7616 drops it.
+/// *   Supports [RFC 2069](https://datatracker.ietf.org/doc/html/rfc2069) compatibility as in
+///     [RFC 2617 section 3.2.2.1](https://datatracker.ietf.org/doc/html/rfc2617#section-3.2.2.1),
+///     even though RFC 7616 drops it. There are still RTSP cameras being sold
+///     in 2021 that use the RFC 2069-style calculations.
+/// *   Supports RFC 7616 `userhash`, even
+///     though it seems impractical and only marginally
+///     useful. The server must index the userhash for each supported algorithm
+///     or calculate it on-the-fly for all users in the database.
+///
+/// ## Security considerations
+///
+/// We strongly advise servers against implementing `Digest`:
+///
+/// *   It's actively harmful in that it prevents the server from securing their
+///     password storage via salted password hashes. See [RFC 7616 Section
+///     5.2](https://datatracker.ietf.org/doc/html/rfc7616#section-5.2).
+/// *   It's no replacement for TLS in terms of protecting confidentiality of
+///     the password, much less confidentiality of any other information.
+///
+/// Nonetheless, it's sometimes required for interoperability, e.g. it's
+/// mandated by ONVIF, and some cameras support no other schemes. Thus, we
+/// support it here.
 #[derive(Eq, PartialEq)]
 pub struct DigestClient {
     /// Holds unescaped versions of all string fields.
@@ -100,6 +118,7 @@ pub struct DigestClient {
     algorithm: Algorithm,
     stale: bool,
     rfc2069_compat: bool,
+    userhash: bool,
     qop: QopSet,
     nc: u32,
 }
@@ -157,8 +176,11 @@ impl DigestClient {
         self.stale
     }
 
-    /// Returns true if using RFC 2069 compatibility mode, in which the
-    /// `request-digest` is calculated without the nonce count, conce, or qop.
+    /// Returns true if using [RFC 2069](https://datatracker.ietf.org/doc/html/rfc2069)
+    /// compatibility mode as in [RFC 2617 section
+    /// 3.2.2.1](https://datatracker.ietf.org/doc/html/rfc2617#section-3.2.2.1).
+    ///
+    /// If so, `request-digest` is calculated without the nonce count, conce, or qop.
     #[inline]
     pub fn rfc2069_compat(&self) -> bool {
         self.rfc2069_compat
@@ -238,9 +260,9 @@ impl DigestClient {
             return Err("no supported/available qop".into());
         }
 
-        self.nc = self.nc.checked_add(1).ok_or("nonce count exhausted")?;
+        let nc = self.nc.checked_add(1).ok_or("nonce count exhausted")?;
         let mut hex_nc = [0u8; 8];
-        let _ = write!(&mut hex_nc[..], "{:08x}", self.nc);
+        let _ = write!(&mut hex_nc[..], "{:08x}", nc);
         let str_hex_nc = match std::str::from_utf8(&hex_nc[..]) {
             Ok(h) => h,
             Err(_) => unreachable!(),
@@ -273,7 +295,13 @@ impl DigestClient {
 
         let mut out = String::with_capacity(128);
         out.push_str("Digest ");
-        if is_valid_quoted_value(p.username) {
+        if self.userhash {
+            let hashed = self
+                .algorithm
+                .h(&[p.username.as_bytes(), b":", realm.as_bytes()]);
+            append_quoted_key_value(&mut out, "username", &hashed)?;
+            append_unquoted_key_value(&mut out, "userhash", "true");
+        } else if is_valid_quoted_value(p.username) {
             append_quoted_key_value(&mut out, "username", p.username)?;
         } else {
             append_extended_key_value(&mut out, "username", p.username);
@@ -292,6 +320,7 @@ impl DigestClient {
             append_quoted_key_value(&mut out, "opaque", o)?;
         }
         out.truncate(out.len() - 2); // remove final ", "
+        self.nc = nc;
         Ok(out)
     }
 }
@@ -307,7 +336,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             ));
         }
         let mut buf_len = 0;
-        let mut unused_qop_len = 0;
+        let mut unused_len = 0;
         let mut realm = None;
         let mut domain = None;
         let mut nonce = None;
@@ -315,6 +344,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         let mut stale = false;
         let mut algorithm = None;
         let mut qop_str = None;
+        let mut userhash_str = None;
 
         // Parse response header field parameters as in
         // [https://datatracker.ietf.org/doc/html/rfc7616#section-3.3].
@@ -327,7 +357,8 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
                 || store_param(k, v, "domain", &mut domain, &mut buf_len)?
                 || store_param(k, v, "nonce", &mut nonce, &mut buf_len)?
                 || store_param(k, v, "opaque", &mut opaque, &mut buf_len)?
-                || store_param(k, v, "qop", &mut qop_str, &mut unused_qop_len)?
+                || store_param(k, v, "qop", &mut qop_str, &mut unused_len)?
+                || store_param(k, v, "userhash", &mut userhash_str, &mut unused_len)?
             {
                 // Do nothing here.
             } else if k.eq_ignore_ascii_case("stale") {
@@ -363,6 +394,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             if qop.0 == 0 {
                 return Err(format!("no supported qop in {:?}", qop_str));
             }
+            buf.clear();
             false
         } else {
             // An absent qop is treated as "auth", according to
@@ -370,7 +402,14 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             qop.0 |= Qop::Auth as u8;
             true
         };
-        buf.clear();
+        let userhash;
+        if let Some(userhash_str) = userhash_str {
+            let userhash_str = userhash_str.unescaped_with_scratch(&mut buf);
+            userhash = userhash_str.eq_ignore_ascii_case("true");
+            buf.clear();
+        } else {
+            userhash = false;
+        };
         realm.append_unescaped(&mut buf);
         let domain_start = buf.len();
         if let Some(d) = domain {
@@ -389,8 +428,9 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
             nonce_start: nonce_start as u32,
             algorithm,
             stale,
-            qop,
             rfc2069_compat,
+            userhash,
+            qop,
             nc: 0,
         })
     }
@@ -407,6 +447,7 @@ impl std::fmt::Debug for DigestClient {
             .field("stale", &self.stale)
             .field("qop", &self.qop)
             .field("rfc2069_compat", &self.rfc2069_compat)
+            .field("userhash", &self.userhash)
             .field("nc", &self.nc)
             .finish()
     }
@@ -653,6 +694,7 @@ mod tests {
             Some("HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS")
         );
         assert_eq!(ctxs[0].stale, false);
+        assert_eq!(ctxs[0].userhash, true);
         assert_eq!(ctxs[0].algorithm, Algorithm::Sha512Trunc256);
         assert_eq!(ctxs[0].qop.0, Qop::Auth as u8);
         assert_eq!(ctxs[0].nc, 0);
@@ -666,6 +708,30 @@ mod tests {
 
         // Note the username and response values in the RFC are *wrong*!
         // https://www.rfc-editor.org/errata/eid4897
+        assert_eq!(
+            &mut ctxs[0]
+                .respond_with_testing_cnonce(
+                    &params,
+                    "NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v"
+                )
+                .unwrap(),
+            "\
+            Digest \
+            username=\"793263caabb707a56211940d90411ea4a575adeccb7e360aeb624ed06ece9b0b\", \
+            userhash=true, \
+            realm=\"api@example.org\", \
+            uri=\"/doe.json\", \
+            nonce=\"5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK\", \
+            algorithm=SHA-512-256, \
+            nc=00000001, \
+            cnonce=\"NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v\", \
+            qop=auth, \
+            response=\"3798d4131c277846293534c3edc11bd8a5e4cdcbff78b05db9d95eeb1cec68a5\", \
+            opaque=\"HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS\""
+        );
+        assert_eq!(ctxs[0].nc, 1);
+        ctxs[0].userhash = false;
+        ctxs[0].nc = 0;
         assert_eq!(
             &mut ctxs[0]
                 .respond_with_testing_cnonce(

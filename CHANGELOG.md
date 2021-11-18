@@ -1,6 +1,7 @@
 ## unreleased
 
 *   shrink `DigestClient`
+*   support `userhash` in `DigestClient`
 
 ## `v0.1.3` (2021-10-20)
 
