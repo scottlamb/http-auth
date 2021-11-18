@@ -22,6 +22,24 @@ impl BasicClient {
     pub fn realm(&self) -> &str {
         &*self.realm
     }
+
+    /// Responds to the challenge with the supplied parameters.
+    ///
+    /// The caller should use the returned string as an `Authorization` or
+    /// `Proxy-Authorization` header value.
+    ///
+    /// The caller is responsible for `username` and `password` being in the
+    /// correct format. Servers may expect arguments to be in Unicode
+    /// Normalization Form C as noted in [RFC 7617 section
+    /// 2.1](https://datatracker.ietf.org/doc/html/rfc7617#section-2.1).
+    pub fn respond(&self, username: &str, password: &str) -> String {
+        let user_pass = format!("{}:{}", username, password);
+        const PREFIX: &str = "Basic ";
+        let mut value = String::with_capacity(PREFIX.len() + base64_encoded_len(user_pass.len()));
+        value.push_str(PREFIX);
+        base64::encode_config_buf(&user_pass[..], base64::STANDARD, &mut value);
+        value
+    }
 }
 
 impl TryFrom<&ChallengeRef<'_>> for BasicClient {
@@ -50,26 +68,6 @@ impl TryFrom<&ChallengeRef<'_>> for BasicClient {
 /// Returns the base64-encoded length for the given input length, including padding.
 fn base64_encoded_len(input_len: usize) -> usize {
     (input_len + 2) / 3 * 4
-}
-
-impl BasicClient {
-    /// Responds to the challenge with the supplied parameters.
-    ///
-    /// The caller should use the returned string as an `Authorization` or
-    /// `Proxy-Authorization` header value.
-    ///
-    /// The caller is responsible for `username` and `password` being in the
-    /// correct format. Servers may expect arguments to be in Unicode
-    /// Normalization Form C as noted in [RFC 7617 section
-    /// 2.1](https://datatracker.ietf.org/doc/html/rfc7617#section-2.1).
-    pub fn respond(&self, username: &str, password: &str) -> String {
-        let user_pass = format!("{}:{}", username, password);
-        const PREFIX: &str = "Basic ";
-        let mut value = String::with_capacity(PREFIX.len() + base64_encoded_len(user_pass.len()));
-        value.push_str(PREFIX);
-        base64::encode_config_buf(&user_pass[..], base64::STANDARD, &mut value);
-        value
-    }
 }
 
 #[cfg(test)]
