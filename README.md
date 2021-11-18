@@ -36,7 +36,7 @@ In order:
 4.  **light-weight.** Minimal dependencies; uses Cargo features so callers can
     avoid them when undesired. Simple code that minimizes monomorphization
     bloat. Small data structures; eg `http_auth::DigestClient` currently weighs
-    in at 40 bytes plus one allocation for all string fields.
+    in at 32 bytes plus one allocation for all string fields.
 6.  **complete.** Implements both parsing and responding to challenges.
     (Currently only supports the client side and responding to the most common
     `Basic` and `Digest` schemes; future expansion is likely.)

@@ -108,11 +108,12 @@ pub struct DigestClient {
     /// 4.  `nonce`: `[nonce_start, buf.len())`
     buf: Box<str>,
 
-    // Positions described in `buf` comment above. See respective methods' doc comments
-    // for more information.
-    domain_start: u32,
-    opaque_start: u32,
-    nonce_start: u32,
+    // Positions described in `buf` comment above. See respective methods' doc
+    // comments for more information. These are stored as `u16` to save space,
+    // and because it's unreasonable for them to be large.
+    domain_start: u16,
+    opaque_start: u16,
+    nonce_start: u16,
 
     // Non-string fields. See respective methods' doc comments for more information.
     algorithm: Algorithm,
@@ -369,10 +370,10 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         }
         let realm = realm.ok_or("missing required parameter realm")?;
         let nonce = nonce.ok_or("missing required parameter nonce")?;
-        if buf_len > u32::MAX as usize {
+        if buf_len > u16::MAX as usize {
             // Incredibly unlikely, but just for completeness.
             return Err(format!(
-                "Unescaped parameters' length {} exceeds u32::MAX!",
+                "Unescaped parameters' length {} exceeds u16::MAX!",
                 buf_len
             ));
         }
@@ -423,9 +424,9 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         nonce.append_unescaped(&mut buf);
         Ok(DigestClient {
             buf: buf.into_boxed_str(),
-            domain_start: domain_start as u32,
-            opaque_start: opaque_start as u32,
-            nonce_start: nonce_start as u32,
+            domain_start: domain_start as u16,
+            opaque_start: opaque_start as u16,
+            nonce_start: nonce_start as u16,
             algorithm,
             stale,
             rfc2069_compat,
