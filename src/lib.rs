@@ -208,10 +208,13 @@ impl<'i> std::fmt::Debug for ParamsPrinter<'i> {
 /// assert!(matches!(client, PasswordClient::Digest(_)));
 /// ```
 #[derive(Default)]
-pub struct PasswordClientBuilder {
-    first_err: Option<String>,
-    cur_client: Option<PasswordClient>,
-}
+pub struct PasswordClientBuilder(
+    /// The current result:
+    /// *   `Some(Ok(_))` if there is a suitable client.
+    /// *   `Some(Err(_))` if there is no suitable client and has been a parse error.
+    /// *   `None` otherwise.
+    Option<Result<PasswordClient, String>>,
+);
 
 impl PasswordClientBuilder {
     /// Considers all challenges from the given [`http::HeaderValue`] challenge list.
@@ -224,11 +227,8 @@ impl PasswordClientBuilder {
 
         match value.to_str() {
             Ok(v) => self = self.challenges(v),
-            Err(_) => {
-                if self.first_err.is_none() {
-                    self.first_err = Some("non-ASCII header value".into());
-                }
-            }
+            Err(_) if matches!(self.0, None) => self.0 = Some(Err("non-ASCII header value".into())),
+            _ => {}
         }
 
         self
@@ -237,13 +237,13 @@ impl PasswordClientBuilder {
     /// Returns true if no more challenges need to be examined.
     #[cfg(feature = "digest-scheme")]
     fn complete(&self) -> bool {
-        matches!(self.cur_client, Some(PasswordClient::Digest(_)))
+        matches!(self.0, Some(Ok(PasswordClient::Digest(_))))
     }
 
     /// Returns true if no more challenges need to be examined.
     #[cfg(not(feature = "digest-scheme"))]
     fn complete(&self) -> bool {
-        matches!(self.cur_client, Some(_))
+        matches!(self.cur_client, Some(Ok(_)))
     }
 
     /// Considers all challenges from the given `&str` challenge list.
@@ -252,12 +252,8 @@ impl PasswordClientBuilder {
         while !self.complete() {
             match parser.next() {
                 Some(Ok(c)) => self = self.challenge(&c),
-                Some(Err(e)) => {
-                    if self.first_err.is_none() {
-                        self.first_err = Some(e.to_string());
-                    }
-                }
-                None => break,
+                Some(Err(e)) if self.0.is_none() => self.0 = Some(Err(e.to_string())),
+                _ => break,
             }
         }
         self
@@ -272,27 +268,25 @@ impl PasswordClientBuilder {
         #[cfg(feature = "digest-scheme")]
         if challenge.scheme.eq_ignore_ascii_case("Digest") {
             match DigestClient::try_from(challenge) {
-                Ok(c) => self.cur_client = Some(PasswordClient::Digest(c)),
-                Err(e) => {
-                    self.first_err.get_or_insert(e);
-                }
+                Ok(c) => self.0 = Some(Ok(PasswordClient::Digest(c))),
+                Err(e) if self.0.is_none() => self.0 = Some(Err(e)),
+                _ => {}
             }
             return self;
         }
 
         #[cfg(feature = "basic-scheme")]
-        if challenge.scheme.eq_ignore_ascii_case("Basic") && self.cur_client.is_none() {
+        if challenge.scheme.eq_ignore_ascii_case("Basic") && !matches!(self.0, Some(Ok(_))) {
             match BasicClient::try_from(challenge) {
-                Ok(c) => self.cur_client = Some(PasswordClient::Basic(c)),
-                Err(e) => {
-                    self.first_err.get_or_insert(e);
-                }
+                Ok(c) => self.0 = Some(Ok(PasswordClient::Basic(c))),
+                Err(e) if self.0.is_none() => self.0 = Some(Err(e)),
+                _ => {}
             }
             return self;
         }
 
-        if self.first_err.is_none() {
-            self.first_err = Some(format!("Unsupported scheme {:?}", challenge.scheme));
+        if self.0.is_none() {
+            self.0 = Some(Err(format!("Unsupported scheme {:?}", challenge.scheme)));
         }
 
         self
@@ -300,13 +294,7 @@ impl PasswordClientBuilder {
 
     /// Returns a new [`PasswordClient`] or fails.
     pub fn build(self) -> Result<PasswordClient, String> {
-        if let Some(c) = self.cur_client {
-            return Ok(c);
-        }
-        if let Some(e) = self.first_err {
-            return Err(e);
-        }
-        Err("no challenges given".into())
+        self.0.unwrap_or_else(|| Err("no challenges given".into()))
     }
 }
 
