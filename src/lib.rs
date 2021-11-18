@@ -29,22 +29,27 @@
 //! In most cases, callers only need to use [`PasswordClient`] and
 //! [`PasswordParams`] to handle `Basic` and `Digest` authentication schemes.
 //!
-//! ```rust
-//! use std::convert::TryFrom as _;
-//! use http_auth::PasswordClient;
-//!
-//! let WWW_AUTHENTICATE_VAL = "UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB";
-//! let mut pw_client = http_auth::PasswordClient::try_from(WWW_AUTHENTICATE_VAL).unwrap();
-//! assert!(matches!(pw_client, http_auth::PasswordClient::Basic(_)));
-//! let response = pw_client.respond(&http_auth::PasswordParams {
-//!     username: "Aladdin",
-//!     password: "open sesame",
-//!     uri: "/",
-//!     method: "GET",
-//!     body: Some(&[]),
-//! }).unwrap();
-//! assert_eq!(response, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
-//! ```
+#![cfg_attr(
+    feature = "http",
+    doc = r##"
+```rust
+use std::convert::TryFrom as _;
+use http_auth::PasswordClient;
+
+let WWW_AUTHENTICATE_VAL = "UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB";
+let mut pw_client = http_auth::PasswordClient::try_from(WWW_AUTHENTICATE_VAL).unwrap();
+assert!(matches!(pw_client, http_auth::PasswordClient::Basic(_)));
+let response = pw_client.respond(&http_auth::PasswordParams {
+    username: "Aladdin",
+    password: "open sesame",
+    uri: "/",
+    method: "GET",
+    body: Some(&[]),
+}).unwrap();
+assert_eq!(response, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+```
+"##
+)]
 //!
 //! The `http` feature allows parsing all `WWW-Authenticate` headers within a
 //! [`http::HeaderMap`] in one call.
@@ -193,20 +198,25 @@ impl<'i> std::fmt::Debug for ParamsPrinter<'i> {
 ///
 /// ## Example
 ///
-/// ```rust
-/// use http_auth::PasswordClient;
-/// let client = PasswordClient::builder()
-///     .challenges("UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB")
-///     .challenges("Digest \
-///                  realm=\"http-auth@example.org\", \
-///                  qop=\"auth, auth-int\", \
-///                  algorithm=MD5, \
-///                  nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
-///                  opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"")
-///     .build()
-///     .unwrap();
-/// assert!(matches!(client, PasswordClient::Digest(_)));
-/// ```
+#[cfg_attr(
+    feature = "digest",
+    doc = r##"
+```rust
+use http_auth::PasswordClient;
+let client = PasswordClient::builder()
+    .challenges("UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB")
+    .challenges("Digest \
+                 realm=\"http-auth@example.org\", \
+                 qop=\"auth, auth-int\", \
+                 algorithm=MD5, \
+                 nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+                 opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"")
+    .build()
+    .unwrap();
+assert!(matches!(client, PasswordClient::Digest(_)));
+```
+"##
+)]
 #[derive(Default)]
 pub struct PasswordClientBuilder(
     /// The current result:
@@ -243,7 +253,7 @@ impl PasswordClientBuilder {
     /// Returns true if no more challenges need to be examined.
     #[cfg(not(feature = "digest-scheme"))]
     fn complete(&self) -> bool {
-        matches!(self.cur_client, Some(Ok(_)))
+        matches!(self.0, Some(Ok(_)))
     }
 
     /// Considers all challenges from the given `&str` challenge list.
@@ -600,6 +610,7 @@ impl<'i> ParamValue<'i> {
     }
 
     /// Returns the unescaped form of this parameter, possibly appending it to `scratch`.
+    #[cfg(feature = "digest-scheme")]
     fn unescaped_with_scratch<'tmp>(&self, scratch: &'tmp mut String) -> &'tmp str
     where
         'i: 'tmp,
