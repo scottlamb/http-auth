@@ -1,3 +1,8 @@
+## `v0.1.5` (2021-11-30)
+
+*   add `http_auth::basic::encode_credentials` for preemptively sending `Basic`
+    credentials.
+
 ## `v0.1.4` (2021-11-18)
 
 *   more thorough documentation

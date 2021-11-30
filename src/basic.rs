@@ -8,6 +8,39 @@ use std::convert::TryFrom;
 
 use crate::ChallengeRef;
 
+/// Encodes the given credentials.
+///
+/// This can be used to preemptively send `Basic` authentication, without
+/// sending an unauthenticated request and waiting for a `401 Unauthorized`
+/// response.
+///
+/// The caller should use the returned string as an `Authorization` or
+/// `Proxy-Authorization` header value.
+///
+/// The caller is responsible for `username` and `password` being in the
+/// correct format. Servers may expect arguments to be in Unicode
+/// Normalization Form C as noted in [RFC 7617 section
+/// 2.1](https://datatracker.ietf.org/doc/html/rfc7617#section-2.1).
+///
+/// ```rust
+/// assert_eq!(
+///     http_auth::basic::encode_credentials("Aladdin", "open sesame"),
+///     "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+/// );
+pub fn encode_credentials(username: &str, password: &str) -> String {
+    let user_pass = format!("{}:{}", username, password);
+    const PREFIX: &str = "Basic ";
+    let mut value = String::with_capacity(PREFIX.len() + base64_encoded_len(user_pass.len()));
+    value.push_str(PREFIX);
+    base64::encode_config_buf(&user_pass[..], base64::STANDARD, &mut value);
+    value
+}
+
+/// Returns the base64-encoded length for the given input length, including padding.
+fn base64_encoded_len(input_len: usize) -> usize {
+    (input_len + 2) / 3 * 4
+}
+
 /// Client for a `Basic` challenge, as in
 /// [RFC 7617](https://datatracker.ietf.org/doc/html/rfc7617).
 ///
@@ -25,20 +58,11 @@ impl BasicClient {
 
     /// Responds to the challenge with the supplied parameters.
     ///
-    /// The caller should use the returned string as an `Authorization` or
-    /// `Proxy-Authorization` header value.
-    ///
-    /// The caller is responsible for `username` and `password` being in the
-    /// correct format. Servers may expect arguments to be in Unicode
-    /// Normalization Form C as noted in [RFC 7617 section
-    /// 2.1](https://datatracker.ietf.org/doc/html/rfc7617#section-2.1).
+    /// This is functionally identical to [`encode_credentials`]; no parameters
+    /// of the `BasicClient` are needed to produce the credentials.
+    #[inline]
     pub fn respond(&self, username: &str, password: &str) -> String {
-        let user_pass = format!("{}:{}", username, password);
-        const PREFIX: &str = "Basic ";
-        let mut value = String::with_capacity(PREFIX.len() + base64_encoded_len(user_pass.len()));
-        value.push_str(PREFIX);
-        base64::encode_config_buf(&user_pass[..], base64::STANDARD, &mut value);
-        value
+        encode_credentials(username, password)
     }
 }
 
@@ -63,11 +87,6 @@ impl TryFrom<&ChallengeRef<'_>> for BasicClient {
             realm: realm.into_boxed_str(),
         })
     }
-}
-
-/// Returns the base64-encoded length for the given input length, including padding.
-fn base64_encoded_len(input_len: usize) -> usize {
-    (input_len + 2) / 3 * 4
 }
 
 #[cfg(test)]
