@@ -108,11 +108,7 @@ const C_ATTR: u8 = 16;
 fn char_classes(b: u8) -> u8 {
     // This table is built by build.rs.
     const TABLE: &[u8; 128] = include_bytes!(concat!(env!("OUT_DIR"), "/char_class_table.bin"));
-    if b > 128 {
-        0
-    } else {
-        TABLE[usize::from(b)]
-    }
+    *TABLE.get(usize::from(b)).unwrap_or(&0)
 }
 
 /// Parsed challenge (scheme and body) using references to the original header value.
