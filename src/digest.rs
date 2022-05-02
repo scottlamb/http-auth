@@ -604,7 +604,7 @@ impl Algorithm {
         match self {
             Algorithm::Md5 => h(md5::Md5::new(), items),
             Algorithm::Sha256 => h(sha2::Sha256::new(), items),
-            Algorithm::Sha512Trunc256 => h(sha2::Sha512Trunc256::new(), items),
+            Algorithm::Sha512Trunc256 => h(sha2::Sha512_256::new(), items),
         }
     }
 }

@@ -1,3 +1,7 @@
+## `v0.1.6` (2021-05-02)
+
+*   upgrade `digest`, `md5`, and `sha2` dependencies.
+
 ## `v0.1.5` (2021-11-30)
 
 *   add `http_auth::basic::encode_credentials` for preemptively sending `Basic`
