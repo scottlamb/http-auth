@@ -85,6 +85,8 @@ pub mod basic;
 #[cfg_attr(docsrs, doc(cfg(feature = "digest-scheme")))]
 pub mod digest;
 
+mod table;
+
 pub use parser::ChallengeParser;
 
 #[cfg(feature = "basic-scheme")]
@@ -95,21 +97,10 @@ pub use crate::basic::BasicClient;
 #[cfg_attr(docsrs, doc(cfg(feature = "digest-scheme")))]
 pub use crate::digest::DigestClient;
 
-// Must match build.rs exactly.
-const C_TCHAR: u8 = 1;
-const C_QDTEXT: u8 = 2;
-const C_ESCAPABLE: u8 = 4;
-const C_OWS: u8 = 8;
+use crate::table::{char_classes, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 
-#[cfg_attr(not(feature = "digest-scheme"), allow(unused))]
-const C_ATTR: u8 = 16;
-
-/// Returns a bitmask of `C_*` values indicating character classes.
-fn char_classes(b: u8) -> u8 {
-    // This table is built by build.rs.
-    const TABLE: &[u8; 128] = include_bytes!(concat!(env!("OUT_DIR"), "/char_class_table.bin"));
-    *TABLE.get(usize::from(b)).unwrap_or(&0)
-}
+#[cfg(feature = "digest-scheme")]
+use crate::table::C_ATTR;
 
 /// Parsed challenge (scheme and body) using references to the original header value.
 /// Produced by [`crate::parser::ChallengeParser`].

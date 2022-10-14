@@ -1,21 +1,54 @@
 // Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Builds `char_class_table.bin`, a table of byte values to the character
+//! Builds and offers lookup on a table of byte values to the character
 //! classes the respective bytes are part of. Most classes are referenced from
 //! [RFC 7235 Appendix B: Imported ABNF](https://datatracker.ietf.org/doc/html/rfc7235#appendix-B)
 //! or [RFC 7235 Appendix C: Collected ABNF](https://datatracker.ietf.org/doc/html/rfc7235#appendix-C).
 
-// Must match lib.rs declaration exactly.
-const C_TCHAR: u8 = 1;
-const C_QDTEXT: u8 = 2;
-const C_ESCAPABLE: u8 = 4;
-const C_OWS: u8 = 8;
-const C_ATTR: u8 = 16;
+pub(crate) const C_TCHAR: u8 = 1;
+pub(crate) const C_QDTEXT: u8 = 2;
+pub(crate) const C_ESCAPABLE: u8 = 4;
+pub(crate) const C_OWS: u8 = 8;
+pub(crate) const C_ATTR: u8 = 16;
+
+static TABLE: [u8; 128] = build_table();
+
+pub(crate) fn char_classes(b: u8) -> u8 {
+    *TABLE.get(usize::from(b)).unwrap_or(&0)
+}
+
+const fn build_table() -> [u8; 128] {
+    // It'd be nice to use array::from_fn here, but it wasn't stablized until Rust 1.63.
+    let mut table = [0u8; 128];
+    let mut i = 0;
+    while i < 128 {
+        let b = i as u8;
+        let mut classes = 0;
+        if is_tchar(b) {
+            classes |= C_TCHAR;
+        }
+        if is_qdtext(b) {
+            classes |= C_QDTEXT;
+        }
+        if is_escapable(b) {
+            classes |= C_ESCAPABLE;
+        }
+        if is_ows(b) {
+            classes |= C_OWS;
+        }
+        if is_attr(b) {
+            classes |= C_ATTR;
+        }
+        table[i] = classes;
+        i += 1;
+    }
+    table
+}
 
 /// Returns if the byte is a `tchar` as defined in
 /// [RFC 7230 section 3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6).
-fn is_tchar(b: u8) -> bool {
+const fn is_tchar(b: u8) -> bool {
     // tchar          = "!" / "#" / "$" / "%" / "&" / "'" / "*"
     //                / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
     //                / DIGIT / ALPHA
@@ -52,13 +85,13 @@ fn is_tchar(b: u8) -> bool {
 /// VCHAR          =  %x21-7E
 ///                ; visible (printing) characters
 /// ```
-fn is_qdtext(b: u8) -> bool {
+const fn is_qdtext(b: u8) -> bool {
     matches!(b, b'\t' | b' ' | 0x21 | 0x23..=0x5B | 0x5D..=0x7E)
 }
 
 /// Returns true if the byte is a valid end of a `quoted-pair`, as defined in
 /// [RFC 7230 section 3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6).
-fn is_escapable(b: u8) -> bool {
+const fn is_escapable(b: u8) -> bool {
     matches!(b, b'\t' | b' ' | 0x21..=0x7E | 0x80..=0xFF)
 }
 
@@ -71,7 +104,7 @@ fn is_escapable(b: u8) -> bool {
 ///                / "^" / "_" / "`" / "|" / "~"
 ///                ; token except ( "*" / "'" / "%" )
 /// ```
-fn is_attr(b: u8) -> bool {
+const fn is_attr(b: u8) -> bool {
     matches!(b,
         b'a'..=b'z'
         | b'A'..=b'Z'
@@ -97,40 +130,6 @@ fn is_attr(b: u8) -> bool {
 ///      OWS            = *( SP / HTAB )
 ///                     ; optional whitespace
 /// ```
-fn is_ows(b: u8) -> bool {
+const fn is_ows(b: u8) -> bool {
     matches!(b, b' ' | b'\t')
-}
-
-fn main() {
-    // This build script depends only on itself.
-    // https://doc.rust-lang.org/cargo/reference/build-scripts.html#cargorerun-if-changedpath
-    println!("cargo:rerun-if-changed=build.rs");
-
-    let mut table = [0u8; 128];
-    for (i, e) in table.iter_mut().enumerate() {
-        let b = i as u8;
-        let mut classes = 0;
-        if is_tchar(b) {
-            classes |= C_TCHAR;
-        }
-        if is_qdtext(b) {
-            classes |= C_QDTEXT;
-        }
-        if is_escapable(b) {
-            classes |= C_ESCAPABLE;
-        }
-        if is_ows(b) {
-            classes |= C_OWS;
-        }
-        if is_attr(b) {
-            classes |= C_ATTR;
-        }
-        *e = classes;
-    }
-
-    let mut out_path = std::path::PathBuf::new();
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    out_path.push(out_dir);
-    out_path.push("char_class_table.bin");
-    std::fs::write(&out_path, table).unwrap();
 }
