@@ -21,8 +21,8 @@ also used by some other protocols such as RTSP.
 
 ## Status
 
-Young but well-tested. The API may change to improve ergonomics and
-functionality. New functionality is likely to be added. PRs welcome!
+Well-tested, suitable for production. The API may change to improve ergonomics
+and functionality. New functionality is likely to be added. PRs welcome!
 
 ## Goals
 
