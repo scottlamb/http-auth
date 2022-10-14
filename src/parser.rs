@@ -127,7 +127,7 @@ impl<'i> Display for Error<'i> {
             "{} at byte {}: {:?}",
             self.error,
             self.pos,
-            format!(
+            format_args!(
                 "{}(HERE-->){}",
                 &self.input[..self.pos],
                 &self.input[self.pos..]
