@@ -1,4 +1,9 @@
-## `v0.1.6` (2021-05-02)
+## `v0.1.7` (2023-01-05)
+
+*   bump minimum Rust version to 1.57.
+*   upgrade `base64` dependency.
+
+## `v0.1.6` (2022-05-02)
 
 *   upgrade `digest`, `md5`, and `sha2` dependencies.
 

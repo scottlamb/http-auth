@@ -32,7 +32,7 @@ pub fn encode_credentials(username: &str, password: &str) -> String {
     const PREFIX: &str = "Basic ";
     let mut value = String::with_capacity(PREFIX.len() + base64_encoded_len(user_pass.len()));
     value.push_str(PREFIX);
-    base64::encode_config_buf(&user_pass[..], base64::STANDARD, &mut value);
+    base64::encode_engine_string(&user_pass[..], &mut value, &base64::engine::DEFAULT_ENGINE);
     value
 }
 
