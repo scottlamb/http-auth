@@ -53,7 +53,7 @@ pub struct BasicClient {
 
 impl BasicClient {
     pub fn realm(&self) -> &str {
-        &*self.realm
+        &self.realm
     }
 
     /// Responds to the challenge with the supplied parameters.

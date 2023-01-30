@@ -151,9 +151,7 @@ struct ParamsPrinter<'i>(&'i [ChallengeParamRef<'i>]);
 
 impl<'i> std::fmt::Debug for ParamsPrinter<'i> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_map()
-            .entries(self.0.iter().map(|&(ref k, ref v)| (k, v)))
-            .finish()
+        f.debug_map().entries(self.0.iter().copied()).finish()
     }
 }
 
