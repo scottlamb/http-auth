@@ -1,7 +1,11 @@
+## `v0.1.8` (2023-01-30)
+
+*   upgrade `base64` dependency from 0.20 to 0.21.
+
 ## `v0.1.7` (2023-01-05)
 
 *   bump minimum Rust version to 1.57.
-*   upgrade `base64` dependency.
+*   upgrade `base64` dependency from 0.13 to 0.20.
 
 ## `v0.1.6` (2022-05-02)
 

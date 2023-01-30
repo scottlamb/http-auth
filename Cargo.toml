@@ -1,6 +1,6 @@
 [package]
 name = "http-auth"
-version = "0.1.7"
+version = "0.1.8"
 license = "MIT/Apache-2.0"
 readme = "README.md"
 description = "HTTP authentication: parse challenge lists, respond to Basic and Digest challenges. Likely to be extended with server support and additional auth schemes."
@@ -35,7 +35,7 @@ all-features = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-base64 = { version = "0.20.0", optional = true }
+base64 = { version = "0.21.0", optional = true }
 digest = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 http = { version = "0.2.5", optional = true }
