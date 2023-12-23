@@ -1,3 +1,7 @@
+## unreleased
+
+*   support conversion from `http` crate version 1.0 types.
+
 ## `v0.1.8` (2023-01-30)
 
 *   upgrade `base64` dependency from 0.20 to 0.21.

@@ -243,7 +243,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "futures-util",
- "http",
+ "http 0.2.5",
  "indexmap",
  "slab",
  "tokio",
@@ -284,13 +284,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "http"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b32afd38673a8016f7c9ae69e5af41a58f81b1d31689040f2f1959594ce194ea"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa 1.0.5",
+]
+
+[[package]]
 name = "http-auth"
 version = "0.1.8"
 dependencies = [
  "base64",
  "digest",
  "hex",
- "http",
+ "http 0.2.5",
+ "http 1.0.0",
  "log",
  "md-5",
  "memchr",
@@ -307,7 +319,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ff4f84919677303da5f147645dbea6b1881f368d03ac84e1dc09031ebd7b2c6"
 dependencies = [
  "bytes",
- "http",
+ "http 0.2.5",
  "pin-project-lite",
 ]
 
@@ -334,7 +346,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "h2",
- "http",
+ "http 0.2.5",
  "http-body",
  "httparse",
  "httpdate",
@@ -674,7 +686,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "h2",
- "http",
+ "http 0.2.5",
  "http-body",
  "hyper",
  "hyper-tls",
