@@ -546,7 +546,7 @@ fn append_quoted_key_value(out: &mut String, key: &str, value: &str) -> Result<(
     let bytes = value.as_bytes();
     for (i, &b) in bytes.iter().enumerate() {
         // Note that bytes >= 128 are in neither C_QDTEXT nor C_ESCAPABLE, so every allowed byte
-        // is a full character.
+        // is a full UTF-8 code point.
         let class = char_classes(b);
         if (class & C_QDTEXT) != 0 {
             // Just advance.
