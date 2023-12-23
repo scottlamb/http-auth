@@ -65,6 +65,10 @@ impl std::ops::BitAnd<Qop> for QopSet {
 
 /// Client for a `Digest` challenge, as in [RFC 7616](https://datatracker.ietf.org/doc/html/rfc7616).
 ///
+/// This can be constructed by the `TryFrom<&ChallengeRef<'_>>` impl. However,
+/// in most cases this client should be used only indirectly through the more
+/// abstract [`crate::PasswordClient`].
+///
 /// Most of the information here is taken from the `WWW-Authenticate` or
 /// `Proxy-Authenticate` header. This also internally maintains a nonce counter.
 ///
@@ -257,7 +261,6 @@ impl DigestClient {
     /// We don't simply implement this as `respond_with_testing_cnonce` and have
     /// `respond` delegate to that method because it'd be confusing/alarming if
     /// that method name ever shows up in production stack traces.
-    /// and have `respond` delegate to the testing version. We don't do that because
     fn respond_inner(&mut self, p: &PasswordParams, cnonce: &str) -> Result<String, String> {
         let realm = self.realm();
         let mut h_a1 = self.algorithm.h(&[

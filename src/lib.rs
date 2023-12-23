@@ -359,7 +359,7 @@ impl TryFrom<&ChallengeRef<'_>> for PasswordClient {
     }
 }
 
-/// Tries to create a `PasswordClient` forom the supplied `str` challenge list.
+/// Tries to create a `PasswordClient` from the supplied `str` challenge list.
 ///
 /// This is a convenience wrapper around [`PasswordClientBuilder`].
 impl TryFrom<&str> for PasswordClient {
@@ -602,7 +602,7 @@ impl<'i> ParamValue<'i> {
     }
 
     /// Creates a new param, panicking if invariants are not satisfied.
-    /// This not part of the stable API; it's just for the fuzz tester to use.
+    /// This is not part of the stable API; it's just for the fuzz tester to use.
     #[doc(hidden)]
     pub fn new(escapes: usize, escaped: &'i str) -> Self {
         let mut pos = 0;
