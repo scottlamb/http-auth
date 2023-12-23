@@ -554,6 +554,8 @@ impl<'i> Iterator for ChallengeParser<'i> {
     }
 }
 
+impl std::iter::FusedIterator for ChallengeParser<'_> {}
+
 #[cfg(test)]
 mod tests {
     use crate::{ChallengeRef, ParamValue};
