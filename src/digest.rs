@@ -492,6 +492,7 @@ impl std::fmt::Debug for DigestClient {
 }
 
 /// Helper for `DigestClient::try_from` which stashes away a `&ParamValue`.
+#[inline(never)]
 fn store_param<'v, 'tmp>(
     k: &'tmp str,
     v: &'v ParamValue<'v>,
@@ -532,6 +533,7 @@ fn append_extended_key_value(out: &mut String, key: &str, value: &str) {
     out.push_str(", ");
 }
 
+#[inline(never)]
 fn append_unquoted_key_value(out: &mut String, key: &str, value: &str) {
     out.push_str(key);
     out.push('=');
@@ -539,6 +541,7 @@ fn append_unquoted_key_value(out: &mut String, key: &str, value: &str) {
     out.push_str(", ");
 }
 
+#[inline(never)]
 fn append_quoted_key_value(out: &mut String, key: &str, value: &str) -> Result<(), String> {
     out.push_str(key);
     out.push_str("=\"");
@@ -592,6 +595,7 @@ impl Algorithm {
         })
     }
 
+    #[inline(never)]
     fn as_str(&self, session: bool) -> &'static str {
         match (self, session) {
             (Algorithm::Md5, false) => "MD5",
@@ -603,6 +607,7 @@ impl Algorithm {
         }
     }
 
+    #[inline(never)]
     fn h(&self, items: &[&[u8]]) -> String {
         match self {
             Algorithm::Md5 => h(md5::Md5::new(), items),
