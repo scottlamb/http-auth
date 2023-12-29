@@ -344,8 +344,8 @@ impl DigestClient {
             append_extended_key_value(&mut out, "username", p.username);
         }
         append_quoted_key_value(&mut out, "realm", self.realm())?;
-        append_quoted_key_value(&mut out, "uri", p.uri)?;
         append_quoted_key_value(&mut out, "nonce", self.nonce())?;
+        append_quoted_key_value(&mut out, "uri", p.uri)?;
         if !self.rfc2069_compat {
             append_unquoted_key_value(&mut out, "algorithm", self.algorithm.as_str(self.session));
             append_unquoted_key_value(&mut out, "nc", str_hex_nc);
@@ -685,8 +685,8 @@ mod tests {
                 .unwrap(),
             "Digest username=\"Mufasa\", \
                     realm=\"http-auth@example.org\", \
-                    uri=\"/dir/index.html\", \
                     nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+                    uri=\"/dir/index.html\", \
                     algorithm=SHA-256, \
                     nc=00000001, \
                     cnonce=\"f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ\", \
@@ -704,8 +704,8 @@ mod tests {
                 .unwrap(),
             "Digest username=\"Mufasa\", \
                     realm=\"http-auth@example.org\", \
-                    uri=\"/dir/index.html\", \
                     nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+                    uri=\"/dir/index.html\", \
                     algorithm=MD5, \
                     nc=00000001, \
                     cnonce=\"f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ\", \
@@ -764,8 +764,8 @@ mod tests {
                 .unwrap(),
             "Digest username=\"Mufasa\", \
                     realm=\"http-auth@example.org\", \
-                    uri=\"/dir/index.html\", \
                     nonce=\"7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v\", \
+                    uri=\"/dir/index.html\", \
                     algorithm=MD5-sess, \
                     nc=00000001, \
                     cnonce=\"f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ\", \
@@ -831,8 +831,8 @@ mod tests {
             username=\"793263caabb707a56211940d90411ea4a575adeccb7e360aeb624ed06ece9b0b\", \
             userhash=true, \
             realm=\"api@example.org\", \
-            uri=\"/doe.json\", \
             nonce=\"5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK\", \
+            uri=\"/doe.json\", \
             algorithm=SHA-512-256, \
             nc=00000001, \
             cnonce=\"NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v\", \
@@ -854,8 +854,8 @@ mod tests {
             Digest \
             username*=UTF-8''J%C3%A4s%C3%B8n%20Doe, \
             realm=\"api@example.org\", \
-            uri=\"/doe.json\", \
             nonce=\"5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK\", \
+            uri=\"/doe.json\", \
             algorithm=SHA-512-256, \
             nc=00000001, \
             cnonce=\"NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v\", \
@@ -897,8 +897,8 @@ mod tests {
             Digest \
             username=\"Mufasa\", \
             realm=\"testrealm@host.com\", \
-            uri=\"/dir/index.html\", \
             nonce=\"dcd98b7102dd2f0e8b11d0f600bfb0c093\", \
+            uri=\"/dir/index.html\", \
             response=\"1949323746fe6a43ef61f9606e7febea\", \
             opaque=\"5ccc069c403ebaf9f0171e9517f40e41\"",
         );
