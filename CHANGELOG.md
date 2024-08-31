@@ -1,3 +1,8 @@
+## `v0.1.10` (2024-08-31)
+
+*   update `base64` to version 0.22.
+*   update minimum Rust version to 1.70.
+
 ## `v0.1.9` (2023-12-28)
 
 *   support conversion from `http` crate version 1.0 types.
