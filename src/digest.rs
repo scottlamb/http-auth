@@ -300,10 +300,6 @@ impl DigestClient {
         let nc = self.nc.checked_add(1).ok_or("nonce count exhausted")?;
         let mut hex_nc = [0u8; 8];
         let _ = write!(&mut hex_nc[..], "{:08x}", nc);
-        let str_hex_nc = match std::str::from_utf8(&hex_nc[..]) {
-            Ok(h) => h,
-            Err(_) => unreachable!(),
-        };
 
         // https://datatracker.ietf.org/doc/html/rfc2617#section-3.2.2.1
         let response = if self.rfc2069_compat {
@@ -348,6 +344,10 @@ impl DigestClient {
         append_quoted_key_value(&mut out, "nonce", self.nonce())?;
         if !self.rfc2069_compat {
             append_unquoted_key_value(&mut out, "algorithm", self.algorithm.as_str(self.session));
+            let str_hex_nc = match std::str::from_utf8(&hex_nc[..]) {
+                Ok(h) => h,
+                Err(_) => unreachable!(),
+            };
             append_unquoted_key_value(&mut out, "nc", str_hex_nc);
             append_quoted_key_value(&mut out, "cnonce", cnonce)?;
             append_unquoted_key_value(&mut out, "qop", qop.as_str());
