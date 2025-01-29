@@ -326,7 +326,7 @@ impl DigestClient {
             ])
         };
 
-        let mut out = String::with_capacity(128);
+        let mut out = String::with_capacity(256);
         out.push_str("Digest ");
         if self.userhash {
             let hashed = self
