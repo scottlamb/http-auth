@@ -137,7 +137,7 @@ impl<'i> ChallengeRef<'i> {
     }
 }
 
-impl<'i> std::fmt::Debug for ChallengeRef<'i> {
+impl std::fmt::Debug for ChallengeRef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChallengeRef")
             .field("scheme", &self.scheme)
@@ -150,7 +150,7 @@ type ChallengeParamRef<'i> = (&'i str, ParamValue<'i>);
 
 struct ParamsPrinter<'i>(&'i [ChallengeParamRef<'i>]);
 
-impl<'i> std::fmt::Debug for ParamsPrinter<'i> {
+impl std::fmt::Debug for ParamsPrinter<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map().entries(self.0.iter().copied()).finish()
     }
@@ -675,7 +675,7 @@ impl<'i> ParamValue<'i> {
     }
 }
 
-impl<'i> std::fmt::Debug for ParamValue<'i> {
+impl std::fmt::Debug for ParamValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "\"{}\"", self.escaped)
     }

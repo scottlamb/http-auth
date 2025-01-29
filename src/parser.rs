@@ -120,7 +120,7 @@ impl<'i> Error<'i> {
     }
 }
 
-impl<'i> Display for Error<'i> {
+impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -136,7 +136,7 @@ impl<'i> Display for Error<'i> {
     }
 }
 
-impl<'i> std::error::Error for Error<'i> {}
+impl std::error::Error for Error<'_> {}
 
 /// A set of zero or more `P_*` values indicating possibilities for the current
 /// and/or upcoming tokens.
