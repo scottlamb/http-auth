@@ -16,12 +16,12 @@ jobs:
         include:
           - rust: stable
             extra_components: rustfmt
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout
       uses: actions/checkout@v4
     - name: Cache
-      uses: actions/cache@v2
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry
@@ -47,7 +47,7 @@ jobs:
       run: cd fuzz && cargo fmt -- --check
   license:
     name: Check copyright/license headers
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v2
