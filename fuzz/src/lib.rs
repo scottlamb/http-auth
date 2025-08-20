@@ -57,7 +57,7 @@ fn token(input: &str) -> nom::IResult<&str, &str> {
 /// VCHAR          =  %x21-7E
 ///                ; visible (printing) characters
 /// ```
-fn quoted_string(input: &str) -> nom::IResult<&str, ParamValue> {
+fn quoted_string(input: &str) -> nom::IResult<&str, ParamValue<'_>> {
     trace!("quoted_string attempt on {:?}", input);
     let is_qdtext = |c| match c {
         '\t' | ' ' | '\x21' | '\x23'..='\x5B' | '\x5D'..='\x7E' => true,
@@ -90,7 +90,7 @@ fn quoted_string(input: &str) -> nom::IResult<&str, ParamValue> {
 /// ```text
 ///   auth-param = token BWS "=" BWS ( token / quoted-string )
 /// ```
-fn auth_param(input: &str) -> nom::IResult<&str, (&str, ParamValue)> {
+fn auth_param(input: &str) -> nom::IResult<&str, (&str, ParamValue<'_>)> {
     trace!("auth_param attempt on {:?}", input);
     separated_pair(
         token,
@@ -170,7 +170,7 @@ where
 ///
 /// Although in practice this is ambiguous when placed into a `1#challenge`,
 /// which we resolve by using `list0_relaxed_inner` rather than `list0_relaxed`.
-fn challenge(input: &str) -> nom::IResult<&str, ChallengeRef> {
+fn challenge(input: &str) -> nom::IResult<&str, ChallengeRef<'_>> {
     trace!("challenge attempt on {:?}", input);
     map(
         tuple((
@@ -195,7 +195,7 @@ fn challenge(input: &str) -> nom::IResult<&str, ChallengeRef> {
 ///   WWW-Authenticate = *( "," OWS ) challenge *( OWS "," [ OWS challenge
 ///    ] )
 /// ```
-pub fn challenges(input: &str) -> nom::IResult<&str, Vec<ChallengeRef>> {
+pub fn challenges(input: &str) -> nom::IResult<&str, Vec<ChallengeRef<'_>>> {
     all_consuming(list1_relaxed(challenge))(input)
 }
 
