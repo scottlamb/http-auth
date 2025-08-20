@@ -552,7 +552,7 @@ pub struct PasswordParams<'a> {
 /// parse_challenges("UnsupportedSchemeA, Basic realm=\"foo\", error error").unwrap_err();
 /// ```
 #[inline]
-pub fn parse_challenges(input: &str) -> Result<Vec<ChallengeRef>, parser::Error> {
+pub fn parse_challenges(input: &str) -> Result<Vec<ChallengeRef<'_>>, parser::Error<'_>> {
     parser::ChallengeParser::new(input).collect()
 }
 
