@@ -19,7 +19,8 @@ pub(crate) fn char_classes(b: u8) -> u8 {
 }
 
 const fn build_table() -> [u8; 128] {
-    // It'd be nice to use array::from_fn here, but it wasn't stablized until Rust 1.63.
+    // It'd be nice to use array::from_fn here, but it's not const-stable.
+    // <https://github.com/rust-lang/rust/issues/147606>
     let mut table = [0u8; 128];
     let mut i = 0;
     while i < 128 {
@@ -48,30 +49,16 @@ const fn build_table() -> [u8; 128] {
 
 /// Returns if the byte is a `tchar` as defined in
 /// [RFC 7230 section 3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6).
+#[rustfmt::skip]
 const fn is_tchar(b: u8) -> bool {
     // tchar          = "!" / "#" / "$" / "%" / "&" / "'" / "*"
     //                / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
     //                / DIGIT / ALPHA
     //                ; any VCHAR, except delimiters
     matches!(b,
-        b'!'
-        | b'#'
-        | b'$'
-        | b'%'
-        | b'&'
-        | b'\''
-        | b'*'
-        | b'+'
-        | b'-'
-        | b'.'
-        | b'^'
-        | b'_'
-        | b'`'
-        | b'|'
-        | b'~'
-        | b'0'..=b'9'
-        | b'a'..=b'z'
-        | b'A'..=b'Z')
+        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*'
+        | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+        | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z')
 }
 
 /// Returns true if the byte is a valid `qdtext` (excluding `obs-text`), as defined in
@@ -104,23 +91,12 @@ const fn is_escapable(b: u8) -> bool {
 ///                / "^" / "_" / "`" / "|" / "~"
 ///                ; token except ( "*" / "'" / "%" )
 /// ```
+#[rustfmt::skip]
 const fn is_attr(b: u8) -> bool {
     matches!(b,
-        b'a'..=b'z'
-        | b'A'..=b'Z'
-        | b'0'..=b'9'
-        | b'!'
-        | b'#'
-        | b'$'
-        | b'&'
-        | b'+'
-        | b'-'
-        | b'.'
-        | b'^'
-        | b'_'
-        | b'`'
-        | b'|'
-        | b'~')
+        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'
+        | b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.'
+        | b'^' | b'_' | b'`' | b'|' | b'~')
 }
 
 /// Returns true if the byte is valid optional whitespace as in [RFC 7230 section
