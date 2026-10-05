@@ -1,7 +1,7 @@
 // Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! HTTP authentication. Currently meant for clients; to be extended for servers.
+//! HTTP authentication, for clients and servers.
 //!
 //! As described in the following documents and specifications:
 //!
@@ -22,6 +22,7 @@
 //! |-----------------|----------|--------------------------------------------------------------|
 //! | `basic-scheme`  | yes      | support for the `Basic` auth scheme                          |
 //! | `digest-scheme` | yes      | support for the `Digest` auth scheme                         |
+//! | `server`        | no       | server side: issue challenges and verify credentials (see [`server`]) |
 //! | `http`          | no       | convenient conversion from `http` crate types, version 0.2 |
 //! | `http10`        | no       | convenient conversion from `http` crate types, version 1.0 |
 //!
@@ -88,7 +89,26 @@ pub mod digest;
 
 mod table;
 
-pub use parser::ChallengeParser;
+#[cfg(all(
+    feature = "server",
+    any(feature = "basic-scheme", feature = "digest-scheme")
+))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(all(
+        feature = "server",
+        any(feature = "basic-scheme", feature = "digest-scheme")
+    )))
+)]
+pub mod server;
+
+#[cfg(any(
+    feature = "digest-scheme",
+    all(feature = "server", feature = "basic-scheme")
+))]
+mod render;
+
+pub use parser::{parse_credentials, ChallengeParser};
 
 #[cfg(feature = "basic-scheme")]
 #[cfg_attr(docsrs, doc(cfg(feature = "basic-scheme")))]
@@ -100,8 +120,10 @@ pub use crate::digest::DigestClient;
 
 use crate::table::{char_classes, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 
-#[cfg(feature = "digest-scheme")]
-use crate::table::C_ATTR;
+/// Returns true if `s` is a valid token (RFC 9110 section 5.6.2).
+pub(crate) fn is_token(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| (char_classes(b) & C_TCHAR) != 0)
+}
 
 /// Parsed challenge (scheme and body) using references to the original header value.
 /// Produced by [`crate::parser::ChallengeParser`].
@@ -110,13 +132,15 @@ use crate::table::C_ATTR;
 /// intermediary for constructing a client that knows how to respond to a specific
 /// challenge scheme. In most cases, callers should construct a [`PasswordClient`]
 /// without directly using `ChallengeRef`.
-///
-/// Only supports the param form, not the apocryphal `token68` form, as described
-/// in [`crate::parser::ChallengeParser`].
 #[derive(Clone, Eq, PartialEq)]
 pub struct ChallengeRef<'i> {
     /// The scheme name, which should be compared case-insensitively.
     pub scheme: &'i str,
+
+    /// The `token68` body ([RFC 9110 section
+    /// 11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)); `params`
+    /// is empty when set.
+    pub token68: Option<&'i str>,
 
     /// Zero or more parameters.
     ///
@@ -132,6 +156,7 @@ impl<'i> ChallengeRef<'i> {
     pub fn new(scheme: &'i str) -> Self {
         ChallengeRef {
             scheme,
+            token68: None,
             params: Vec::new(),
         }
     }
@@ -141,8 +166,34 @@ impl std::fmt::Debug for ChallengeRef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChallengeRef")
             .field("scheme", &self.scheme)
+            .field("token68", &self.token68)
             .field("params", &ParamsPrinter(&self.params))
             .finish()
+    }
+}
+
+/// Renders as a header value, quoting `realm` and any value that isn't a
+/// token. `params` are not written when `token68` is set. Round-trips values
+/// produced by [`ChallengeParser`].
+impl std::fmt::Display for ChallengeRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.scheme)?;
+        if let Some(token68) = self.token68 {
+            return write!(f, " {}", token68);
+        }
+        for (i, (k, v)) in self.params.iter().enumerate() {
+            f.write_str(if i == 0 { " " } else { ", " })?;
+            f.write_str(k)?;
+            f.write_str("=")?;
+            let is_token =
+                !k.eq_ignore_ascii_case("realm") && v.escapes == 0 && is_token(v.escaped);
+            if is_token {
+                f.write_str(v.escaped)?;
+            } else {
+                write!(f, "\"{}\"", v.escaped)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -248,7 +299,7 @@ impl PasswordClientBuilder {
 
         match value.to_str() {
             Ok(v) => self = self.challenges(v),
-            Err(_) if matches!(self.0, None) => self.0 = Some(Err("non-ASCII header value".into())),
+            Err(_) if self.0.is_none() => self.0 = Some(Err("non-ASCII header value".into())),
             _ => {}
         }
 
@@ -539,21 +590,41 @@ pub struct PasswordParams<'a> {
 ///     vec![
 ///         ChallengeRef {
 ///             scheme: "UnsupportedSchemeA",
+///             token68: None,
 ///             params: vec![],
 ///         },
 ///         ChallengeRef {
 ///             scheme: "Basic",
+///             token68: None,
 ///             params: vec![("realm", ParamValue::try_from_escaped("foo").unwrap())],
 ///         },
 ///     ],
 /// );
 ///
 /// // Returns `Err` if there is a syntax error anywhere in the input.
-/// parse_challenges("UnsupportedSchemeA, Basic realm=\"foo\", error error").unwrap_err();
+/// parse_challenges("UnsupportedSchemeA, Basic realm=\"foo\", error realm=\"unclosed").unwrap_err();
 /// ```
 #[inline]
 pub fn parse_challenges(input: &str) -> Result<Vec<ChallengeRef<'_>>, parser::Error<'_>> {
     parser::ChallengeParser::new(input).collect()
+}
+
+/// Returns the value of each of `names` (compared case-insensitively), or the
+/// first repeated name.
+#[cfg(feature = "digest-scheme")]
+pub(crate) fn find_params<'a, 'i, const N: usize>(
+    params: &'a [(&'i str, ParamValue<'i>)],
+    names: [&str; N],
+) -> Result<[Option<&'a ParamValue<'i>>; N], &'i str> {
+    let mut found = [None; N];
+    for (k, v) in params {
+        if let Some(i) = names.iter().position(|n| k.eq_ignore_ascii_case(n)) {
+            if found[i].replace(v).is_some() {
+                return Err(k);
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// Parsed challenge parameter value used within [`ChallengeRef`].
@@ -646,25 +717,15 @@ impl<'i> ParamValue<'i> {
         self.escaped.len() - self.escapes
     }
 
-    /// Returns the unescaped form of this parameter as a fresh `String`.
-    pub fn to_unescaped(&self) -> String {
-        let mut to = String::new();
-        self.append_unescaped(&mut to);
-        to
-    }
-
-    /// Returns the unescaped form of this parameter, possibly appending it to `scratch`.
-    #[cfg(feature = "digest-scheme")]
-    fn unescaped_with_scratch<'tmp>(&self, scratch: &'tmp mut String) -> &'tmp str
-    where
-        'i: 'tmp,
-    {
+    /// Returns the unescaped form of this parameter; borrowed when there are no
+    /// escapes.
+    pub fn to_unescaped(&self) -> std::borrow::Cow<'i, str> {
         if self.escapes == 0 {
-            self.escaped
+            std::borrow::Cow::Borrowed(self.escaped)
         } else {
-            let start = scratch.len();
-            self.append_unescaped(scratch);
-            &scratch[start..]
+            let mut to = String::new();
+            self.append_unescaped(&mut to);
+            std::borrow::Cow::Owned(to)
         }
     }
 
@@ -683,8 +744,8 @@ impl std::fmt::Debug for ParamValue<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::table::{C_ATTR, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
     use crate::ParamValue;
-    use crate::{C_ATTR, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 
     /// Prints the character classes of all ASCII bytes from the table.
     ///
@@ -791,5 +852,13 @@ mod tests {
             .to_unescaped(),
             "foobar"
         );
+    }
+
+    #[test]
+    fn display_forms() {
+        let c = &crate::parse_challenges(r#"Basic realm="foo", x="a b""#).unwrap()[0];
+        assert_eq!(c.to_string(), r#"Basic realm="foo", x="a b""#);
+        let c = &crate::parse_challenges("Digest realm=foo, nonce=abc").unwrap()[0];
+        assert_eq!(c.to_string(), r#"Digest realm="foo", nonce=abc"#);
     }
 }

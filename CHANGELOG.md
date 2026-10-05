@@ -1,3 +1,30 @@
+## Unreleased (0.2.0)
+
+### Breaking
+
+*   `ChallengeRef` gains a `token68` field; `ChallengeParser` accepts `token68`
+    challenges and `1*SP` between the scheme and body ([RFC 9110 section
+    11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
+*   `ParamValue::to_unescaped` now returns `std::borrow::Cow<str>` instead of
+    `String`.
+
+### Added
+
+*   server support behind the `server` feature: `basic::BasicServer`,
+    `digest::DigestServer`, `server::Challenge`, `server::ServerError`.
+*   `parse_credentials` for `Authorization` / `Proxy-Authorization` values.
+*   `impl Display for ChallengeRef`.
+*   `digest::Algorithm::ha1`.
+*   `digest::Qop` now implements `PartialEq` and `Eq`.
+*   `digest::QopSet` constructors: `From<Qop>`, `BitOr`, `contains`,
+    `is_empty`.
+
+### Changed
+
+*   fix: `qop=auth-int` hashes `H(entity-body)`, not the raw body.
+*   algorithm names in challenges are now matched case-insensitively.
+*   the client rejects a repeated `stale` or `algorithm` in a challenge.
+
 ## `v0.1.10` (2024-08-31)
 
 *   update `base64` to version 0.22.

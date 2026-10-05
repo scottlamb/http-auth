@@ -40,7 +40,7 @@ fn main() {
             .get_all(reqwest::header::WWW_AUTHENTICATE),
     )
     .unwrap();
-    println!("Password challenge client: {:#?}", &pw_client);
+    println!("Password challenge client: {:#?}", pw_client);
     let authorization = pw_client
         .respond(&http_auth::PasswordParams {
             username,
@@ -52,7 +52,7 @@ fn main() {
             body: Some(&[]),
         })
         .unwrap();
-    println!("Authorization: {}", &authorization);
+    println!("Authorization: {}", authorization);
     let mut authorization = HeaderValue::try_from(authorization).unwrap();
     authorization.set_sensitive(true);
     let second_resp = client
