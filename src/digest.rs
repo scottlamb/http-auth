@@ -284,9 +284,14 @@ impl DigestClient {
         // [https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.3].
         let (h_a2, qop);
         if let (Some(body), true) = (p.body, self.qop & Qop::AuthInt) {
-            h_a2 = self
-                .algorithm
-                .h(&[p.method.as_bytes(), b":", p.uri.as_bytes(), b":", body]);
+            let h_body = self.algorithm.h(&[body]);
+            h_a2 = self.algorithm.h(&[
+                p.method.as_bytes(),
+                b":",
+                p.uri.as_bytes(),
+                b":",
+                h_body.as_bytes(),
+            ]);
             qop = Qop::AuthInt;
         } else if self.qop & Qop::Auth {
             h_a2 = self
@@ -584,15 +589,18 @@ impl Algorithm {
     /// Parses a string into a tuple of `Algorithm` and a bool representing
     /// whether the `-sess` suffix is present.
     fn parse(s: &str) -> Result<(Self, bool), String> {
-        Ok(match s {
-            "MD5" => (Algorithm::Md5, false),
-            "MD5-sess" => (Algorithm::Md5, true),
-            "SHA-256" => (Algorithm::Sha256, false),
-            "SHA-256-sess" => (Algorithm::Sha256, true),
-            "SHA-512-256" => (Algorithm::Sha512Trunc256, false),
-            "SHA-512-256-sess" => (Algorithm::Sha512Trunc256, true),
-            _ => return Err(format!("unknown algorithm {:?}", s)),
-        })
+        const ALL: [(&str, Algorithm, bool); 6] = [
+            ("MD5", Algorithm::Md5, false),
+            ("MD5-sess", Algorithm::Md5, true),
+            ("SHA-256", Algorithm::Sha256, false),
+            ("SHA-256-sess", Algorithm::Sha256, true),
+            ("SHA-512-256", Algorithm::Sha512Trunc256, false),
+            ("SHA-512-256-sess", Algorithm::Sha512Trunc256, true),
+        ];
+        ALL.iter()
+            .find(|(name, _, _)| name.eq_ignore_ascii_case(s))
+            .map(|&(_, a, session)| (a, session))
+            .ok_or_else(|| format!("unknown algorithm {:?}", s))
     }
 
     #[inline(never)]
@@ -903,6 +911,31 @@ mod tests {
             opaque=\"5ccc069c403ebaf9f0171e9517f40e41\"",
         );
         assert_eq!(ctxs[0].nc, 1);
+    }
+
+    /// Expected value from curl 8.7.1.
+    #[test]
+    fn auth_int_matches_curl() {
+        let challenges = crate::parse_challenges(
+            "Digest realm=\"r@x\", nonce=\"abc123\", opaque=\"op\", qop=\"auth-int\", algorithm=md5",
+        )
+        .unwrap();
+        let mut ctx = DigestClient::try_from(&challenges[0]).unwrap();
+        let params = crate::PasswordParams {
+            username: "Mufasa",
+            password: "Circle of Life",
+            uri: "/authint",
+            body: Some(&[]),
+            method: "GET",
+        };
+        let out = ctx
+            .respond_with_testing_cnonce(&params, "YzJkYTcyMWM2ZjcyN2UyNjJmNWZmNzU0MmFhNmQyZmY=")
+            .unwrap();
+        assert!(
+            out.contains("response=\"ee3a03bbbe06873f8ac5c462ab8903b7\""),
+            "{}",
+            out
+        );
     }
 
     // See sizes with: cargo test -- --nocapture digest::tests::size
