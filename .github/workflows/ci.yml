@@ -34,9 +34,19 @@ jobs:
         toolchain: ${{ matrix.rust }}
         components: ${{ matrix.extra_components }}
     - name: Test with all features
+      env:
+        HTTP_AUTH_REQUIRE_CURL: 1
       run: cargo test --all-features --all-targets
     - name: Compile with no features
       run: cargo check --no-default-features
+    - name: Compile each feature combination
+      env:
+        RUSTFLAGS: -D warnings
+      run: |
+        for f in basic-scheme digest-scheme server server,basic-scheme server,digest-scheme server,basic-scheme,digest-scheme; do
+          echo "features=[$f]"
+          cargo check --tests --no-default-features --features "$f"
+        done
     - name: Check fuzz tests compile (but don't actually fuzz)
       run: cd fuzz && cargo check && cargo test
     - name: Check main crate formatting

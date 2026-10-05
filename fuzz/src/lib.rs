@@ -13,9 +13,9 @@ use log::trace;
 use nom::branch::alt;
 use nom::bytes::complete::is_a;
 use nom::character::complete::{char, satisfy};
-use nom::combinator::{all_consuming, consumed, map, opt, value};
+use nom::combinator::{all_consuming, consumed, eof, map, opt, peek, recognize, value};
 use nom::multi::{fold_many0, many0_count, many1, many1_count, separated_list0, separated_list1};
-use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
+use nom::sequence::{delimited, pair, preceded, separated_pair, terminated, tuple};
 
 use http_auth::{ChallengeRef, ParamValue};
 
@@ -175,11 +175,21 @@ fn challenge(input: &str) -> nom::IResult<&str, ChallengeRef<'_>> {
     map(
         tuple((
             token,
-            opt(preceded(char(' '), list0_relaxed_inner(auth_param))),
+            opt(preceded(
+                many1_count(char(' ')),
+                alt((
+                    map(challenge_token68, |t| (Some(t), Vec::new())),
+                    map(list0_relaxed_inner(auth_param), |p| (None, p)),
+                )),
+            )),
         )),
-        |(scheme, opt_params)| ChallengeRef {
-            scheme,
-            params: opt_params.unwrap_or_default(),
+        |(scheme, opt_body)| {
+            let (token68, params) = opt_body.unwrap_or((None, Vec::new()));
+            ChallengeRef {
+                scheme,
+                token68,
+                params,
+            }
         },
     )(input)
 }
@@ -197,6 +207,50 @@ fn challenge(input: &str) -> nom::IResult<&str, ChallengeRef<'_>> {
 /// ```
 pub fn challenges(input: &str) -> nom::IResult<&str, Vec<ChallengeRef<'_>>> {
     all_consuming(list1_relaxed(challenge))(input)
+}
+
+/// Parses `token68` as in [RFC 9110 section 11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2).
+///
+/// ```text
+/// token68 = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="
+/// ```
+fn token68(input: &str) -> nom::IResult<&str, &str> {
+    recognize(pair(
+        is_a("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/"),
+        many0_count(char('=')),
+    ))(input)
+}
+
+/// Parses a `token68` that is the whole body of a challenge, i.e. followed by a
+/// challenge terminator (comma, or OWS then comma, or EOF).
+fn challenge_token68(input: &str) -> nom::IResult<&str, &str> {
+    terminated(
+        token68,
+        peek(alt((value((), tuple((ows, char(',')))), value((), eof)))),
+    )(input)
+}
+
+/// Parses credentials as in [RFC 9110 section 11.4](https://datatracker.ietf.org/doc/html/rfc9110#section-11.4).
+///
+/// ```text
+/// credentials = auth-scheme [ 1*SP ( token68 / #auth-param ) ]
+/// ```
+pub fn credentials(input: &str) -> nom::IResult<&str, ChallengeRef<'_>> {
+    let input = input.trim_matches(|c| c == ' ' || c == '\t');
+    let reject =
+        |input| nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Verify));
+    if input.starts_with(',') {
+        return Err(reject(input));
+    }
+    let (_, challenges) = all_consuming(list1_relaxed(challenge))(input)?;
+    if challenges.len() != 1 {
+        return Err(reject(input));
+    }
+    let c = challenges.into_iter().next().unwrap();
+    if c.token68.is_some() && input.ends_with(',') {
+        return Err(reject(input));
+    }
+    Ok(("", c))
 }
 
 #[cfg(test)]
@@ -232,6 +286,7 @@ mod tests {
                 "",
                 vec![ChallengeRef {
                     scheme: "Scheme",
+                    token68: None,
                     params: vec![("foo", ParamValue::new(1, "blah \\\" blah"),)],
                 }]
             ))
@@ -292,5 +347,60 @@ mod tests {
         assert_eq!(list0_relaxed(token)(""), Ok(("", vec![])));
         assert_eq!(list0_relaxed(token)(","), Ok(("", vec![])));
         assert_eq!(list0_relaxed(token)(",  ,"), Ok(("", vec![])));
+    }
+
+    #[test]
+    fn credentials_agree_with_hand_parser() {
+        for input in [
+            "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+            "Basic   abc=",
+            "Digest a",
+            "Negotiate",
+            "Basic ",
+            r#"Digest username="Mufasa", qop=auth, nc=00000001"#,
+            r#"Digest  a="x \"y\"", b=c,"#,
+            "",
+            " Basic abc",
+            "Basic\tabc",
+            "Digest a=b, Basic xyz",
+            "Digest a=b, Basic",
+            "Basic abc def",
+            "Digest a=b ",
+            "Digest a=\"b",
+            "Digest a=b, c=d, A=e",
+            "Digest a=b,",
+            "Digest a=b , c=d",
+            "Digest a=b ,\t, c=d",
+            "  Basic abc=  ",
+            "\tDigest a=b, c=d \t",
+            "Digest a=b, ",
+            "Digest a=b , ",
+            "Digest ,",
+            "Digest \t,",
+            "Digest , ,",
+            "Digest ,a=b",
+            "Digest , a=b",
+            "Digest \t, a=b",
+            "Digest , ",
+            "Digest \t, ",
+            "Digest \t,\t",
+            "Digest , ,x",
+            "Digest \ta=b",
+            "Digest a=b c=d",
+            // Credentials are not a list.
+            ",Basic abc",
+            ", ,Basic abc,,",
+            ",Digest a=b",
+            ",Digest a=b,",
+            "Basic abc,",
+            "Basic abc,,,",
+            "Basic /zpwdw==",
+            "IFF , \u{d2}\u{da}\u{0}K;\u{ff}K\u{aa}",
+            "`** \t,",
+        ] {
+            let hand = http_auth::parse_credentials(input).ok();
+            let nom = credentials(input).ok().map(|(_, c)| c);
+            assert_eq!(hand, nom, "{:?}", input);
+        }
     }
 }
