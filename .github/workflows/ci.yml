@@ -43,9 +43,9 @@ jobs:
       env:
         RUSTFLAGS: -D warnings
       run: |
-        for f in basic-scheme digest-scheme server server,basic-scheme server,digest-scheme server,basic-scheme,digest-scheme; do
+        for f in basic-scheme digest-scheme basic-scheme,http digest-scheme,http10 server server,basic-scheme server,digest-scheme server,basic-scheme,digest-scheme; do
           echo "features=[$f]"
-          cargo check --tests --no-default-features --features "$f"
+          cargo check --all-targets --no-default-features --features "$f"
         done
     - name: Check fuzz tests compile (but don't actually fuzz)
       run: cd fuzz && cargo check && cargo test

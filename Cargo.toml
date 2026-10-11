@@ -62,7 +62,8 @@ tokio = { version = "1.40.0", features = ["net", "rt"] }
 
 [[example]]
 name = "reqwest"
-required-features = ["http"]
+# reqwest 0.12 uses http 1.x types.
+required-features = ["http10"]
 
 [[example]]
 name = "server"
