@@ -72,14 +72,17 @@ per-request `ServerError`.
 
 # Errors
 
-`ServerError::status()` gives the HTTP status to respond with; re-challenge
-with `stale=true` on `ServerError::Stale`. Failure details go to logs only.
+`ServerError::status()` (or, with `http10`, `status_code()`) gives the HTTP
+status to respond with; re-challenge with `stale=true` on `ServerError::Stale`.
+Failure details go to logs only.
 
 ## Features and compatibility
 
 `server` gates server code; needs `basic-scheme` and/or `digest-scheme`; adds
-`hmac`, `subtle`. Every feature combination and `--no-default-features`
-builds; MSRV stays 1.70. 0.2 changes are in [CHANGELOG](../CHANGELOG.md).
+`hmac`, `subtle`. Every feature combination and `--no-default-features` builds;
+MSRV stays 1.70. With `http10`, a `Challenge` converts to an
+`http::HeaderValue`, and a `digest::Request` from an `http::Request` or
+`http::request::Parts`. 0.2 changes are in [CHANGELOG](../CHANGELOG.md).
 
 # Security notes
 

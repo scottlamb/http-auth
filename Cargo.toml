@@ -70,4 +70,4 @@ required-features = ["http10"]
 
 [[example]]
 name = "server"
-required-features = ["server", "basic-scheme", "digest-scheme"]
+required-features = ["server", "basic-scheme", "digest-scheme", "http10"]

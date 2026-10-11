@@ -35,7 +35,9 @@
 *   server support behind the `server` feature: `basic::ChallengeBuilder`,
     `basic::Credentials`, `digest::Server`, `digest::CredentialsRef`,
     `digest::Ha1`, `Challenge`, `ServerError`, `ConfigError`.
-    `PasswordClientBuilder::with` also accepts a `&Challenge`.
+    `PasswordClientBuilder::with` also accepts a `&Challenge`. With `http10`,
+    `ServerError::status_code`, `From<Challenge> for http::HeaderValue`, and
+    `digest::Request` from `&http::Request<B>` / `&http::request::Parts`.
 *   `parse_credentials` and `CredentialsRef` for `Authorization` /
     `Proxy-Authorization` values.
 *   `impl Display for ChallengeRef`.

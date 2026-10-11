@@ -21,11 +21,58 @@ pub struct Request<'a> {
 
     /// The request-target exactly as on the request line, e.g.
     /// `/dir/index.html?x=1`, `*`, or an absolute URI.
+    ///
+    /// [`Server::verify`] compares this to the credentials' `uri` exactly, as
+    /// [RFC 7616 section 3.4.6](https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.6)
+    /// specifies, returning [`ServerError::UriMismatch`] otherwise. Some
+    /// servers (such as Apache's `mod_auth_digest`) match more leniently, e.g.
+    /// accepting an absolute URI for its path, to accommodate clients and
+    /// intermediaries that rewrite the request-target; this crate doesn't.
     pub uri: &'a str,
 
     /// The entity body. Required (use `Some(&[])` if empty) when the
     /// response uses `qop=auth-int`.
     pub body: Option<&'a [u8]>,
+}
+
+/// With the `http10` feature, takes the method and request-target from an
+/// `http` request; `body` is `None`.
+///
+/// The request-target is the URI's path and query (origin-form), which is also
+/// right for HTTP/2's `:path`. Construct a [`Request`] directly for
+/// absolute-form requests (e.g. to a proxy), whose credentials' `uri` is the
+/// absolute URI.
+#[cfg(feature = "http10")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http10")))]
+impl<'a, B> From<&'a http::Request<B>> for Request<'a> {
+    fn from(r: &'a http::Request<B>) -> Self {
+        Request::from_http(r.method(), r.uri())
+    }
+}
+
+/// Like `From<&http::Request<B>>`.
+#[cfg(feature = "http10")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http10")))]
+impl<'a> From<&'a http::request::Parts> for Request<'a> {
+    fn from(p: &'a http::request::Parts) -> Self {
+        Request::from_http(&p.method, &p.uri)
+    }
+}
+
+#[cfg(feature = "http10")]
+impl<'a> Request<'a> {
+    fn from_http(method: &'a http::Method, uri: &'a http::Uri) -> Self {
+        let uri = match (uri.path_and_query(), uri.authority()) {
+            (Some(p), _) => p.as_str(),
+            (None, Some(a)) => a.as_str(), // authority-form, as for `CONNECT`.
+            (None, None) => "/",
+        };
+        Request {
+            method: method.as_str(),
+            uri,
+            body: None,
+        }
+    }
 }
 
 /// `H(username ":" realm ":" password)` for one algorithm: a
@@ -692,6 +739,23 @@ mod tests {
         assert!(s.challenges(true, later)[0]
             .as_str()
             .contains(", stale=true, "));
+    }
+
+    #[cfg(feature = "http10")]
+    #[test]
+    fn request_from_http() {
+        for (uri, expected) in [
+            ("/dir/index.html?x=1", "/dir/index.html?x=1"),
+            ("https://example.com/a?b", "/a?b"),
+            ("*", "*"),
+            ("example.com:443", "example.com:443"),
+        ] {
+            let req = http::Request::get(uri).body(()).unwrap();
+            let r = Request::from(&req);
+            assert_eq!((r.method, r.uri), ("GET", expected));
+            let (parts, ()) = req.into_parts();
+            assert_eq!(Request::from(&parts).uri, expected);
+        }
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! `Digest`.
 //!
 //! ```text
-//! cargo run --example server --features server
+//! cargo run --example server --features server,http10
 //! curl --basic  -u aladdin:"open sesame" http://127.0.0.1:8080/basic
 //! curl --digest -u mufasa:"Circle of Life" http://127.0.0.1:8080/digest
 //! ```
@@ -15,24 +15,27 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use http_auth::digest::{Algorithm, Secret};
-use http_auth::{basic, digest, Challenge, ServerError};
+use http_auth::{basic, digest, ServerError};
 use http_body_util::Empty;
 use hyper::body::{Bytes, Incoming};
-use hyper::header::{AUTHORIZATION, WWW_AUTHENTICATE};
-use hyper::{Request, Response};
+use hyper::header::{HeaderValue, AUTHORIZATION, WWW_AUTHENTICATE};
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 
 const BIND: &str = "127.0.0.1:8080";
 
 struct Servers {
-    /// Built once and cloned per use.
-    basic: Challenge,
+    /// Built once; cloning a `HeaderValue` is cheap.
+    basic: HeaderValue,
     digest: digest::Server,
 }
 
 fn main() {
     let servers = Arc::new(Servers {
-        basic: basic::ChallengeBuilder::new("WallyWorld").build().unwrap(),
+        basic: basic::ChallengeBuilder::new("WallyWorld")
+            .build()
+            .unwrap()
+            .into(),
         digest: digest::Server::builder(
             "http-auth@example.org",
             &[Algorithm::Sha256, Algorithm::Md5],
@@ -71,22 +74,28 @@ fn handle(servers: &Servers, req: Request<Incoming>) -> Response<Empty<Bytes>> {
         .headers()
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
-    let uri = req.uri().path_and_query().map_or("/", |p| p.as_str());
     let (status, challenges) = match (req.uri().path(), authorization) {
         ("/basic", Some(a)) => verify_basic(&servers.basic, a),
-        ("/basic", None) => (401, vec![servers.basic.clone()]),
-        ("/digest", Some(a)) => verify_digest(&servers.digest, a, req.method().as_str(), uri),
-        ("/digest", None) => (401, servers.digest.challenges(false, SystemTime::now())),
-        _ => (404, vec![]),
+        ("/basic", None) => (StatusCode::UNAUTHORIZED, vec![servers.basic.clone()]),
+        ("/digest", Some(a)) => verify_digest(&servers.digest, a, &req),
+        ("/digest", None) => (
+            StatusCode::UNAUTHORIZED,
+            to_header_values(servers.digest.challenges(false, SystemTime::now())),
+        ),
+        _ => (StatusCode::NOT_FOUND, vec![]),
     };
     let mut resp = Response::builder().status(status);
-    for c in &challenges {
-        resp = resp.header(WWW_AUTHENTICATE, c.as_str());
+    for c in challenges {
+        resp = resp.header(WWW_AUTHENTICATE, c);
     }
     resp.body(Empty::new()).unwrap()
 }
 
-fn verify_basic(challenge: &Challenge, header: &str) -> (u16, Vec<Challenge>) {
+fn to_header_values(challenges: Vec<http_auth::Challenge>) -> Vec<HeaderValue> {
+    challenges.into_iter().map(HeaderValue::from).collect()
+}
+
+fn verify_basic(challenge: &HeaderValue, header: &str) -> (StatusCode, Vec<HeaderValue>) {
     let outcome = basic::Credentials::parse(header).and_then(|c| {
         if c.username() == "aladdin" && c.verify_password("open sesame") {
             Ok(())
@@ -95,8 +104,8 @@ fn verify_basic(challenge: &Challenge, header: &str) -> (u16, Vec<Challenge>) {
         }
     });
     match outcome {
-        Ok(()) => (200, vec![]),
-        Err(e) => (e.status(), vec![challenge.clone()]),
+        Ok(()) => (StatusCode::OK, vec![]),
+        Err(e) => (e.status_code(), vec![challenge.clone()]),
     }
 }
 
@@ -114,25 +123,22 @@ fn lookup(username: digest::Username<'_>) -> Option<Secret<'static>> {
 fn verify_digest(
     server: &digest::Server,
     header: &str,
-    method: &str,
-    uri: &str,
-) -> (u16, Vec<Challenge>) {
+    req: &Request<Incoming>,
+) -> (StatusCode, Vec<HeaderValue>) {
     let now = SystemTime::now();
     let outcome = digest::CredentialsRef::parse(header).and_then(|r| {
         let r = server.check_nonce(r, now)?;
-        server.verify(
-            &r,
-            http_auth::digest::Request {
-                method,
-                uri,
-                body: None,
-            },
-            lookup(r.username()),
-        )
+        server.verify(&r, req.into(), lookup(r.username()))
     });
     match outcome {
-        Ok(()) => (200, vec![]),
-        Err(ServerError::Stale) => (401, server.challenges(true, now)),
-        Err(e) => (e.status(), server.challenges(false, now)),
+        Ok(()) => (StatusCode::OK, vec![]),
+        Err(ServerError::Stale) => (
+            StatusCode::UNAUTHORIZED,
+            to_header_values(server.challenges(true, now)),
+        ),
+        Err(e) => (
+            e.status_code(),
+            to_header_values(server.challenges(false, now)),
+        ),
     }
 }

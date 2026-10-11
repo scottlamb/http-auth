@@ -115,6 +115,13 @@ impl ServerError {
             ServerError::BodyRequired | ServerError::SecretMismatch => 500,
         }
     }
+
+    /// Like [`ServerError::status`], as an `http::StatusCode`.
+    #[cfg(feature = "http10")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http10")))]
+    pub fn status_code(&self) -> http::StatusCode {
+        http::StatusCode::from_u16(self.status()).expect("status() is a valid status code")
+    }
 }
 
 impl std::fmt::Display for ServerError {
@@ -188,6 +195,15 @@ mod tests {
         assert_eq!(ServerError::Stale.status(), 401);
         assert_eq!(ServerError::SecretMismatch.status(), 500);
         assert_eq!(ServerError::BodyRequired.status(), 500);
+    }
+
+    #[cfg(feature = "http10")]
+    #[test]
+    fn status_code() {
+        assert_eq!(
+            ServerError::Stale.status_code(),
+            http::StatusCode::UNAUTHORIZED
+        );
     }
 
     #[cfg(feature = "http10")]
