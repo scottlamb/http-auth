@@ -58,15 +58,13 @@ macro_rules! trace {
 ///
 /// ## Implementation notes
 ///
-/// This rigorously matches the official ABNF grammar except as follows:
-///
-/// *   Doesn't allow non-ASCII characters. [RFC 7235 Appendix
-///     B](https://datatracker.ietf.org/doc/html/rfc7235#appendix-B) references
-///     the `quoted-string` rule from [RFC 7230 section
-///     3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6),
-///     which allows these via `obs-text`, but the meaning is ill-defined in
-///     the context of RFC 7235.
-/// *   Accepts `token68` challenges ([RFC 9110 section 11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
+/// This rigorously matches the official ABNF grammar ([RFC 9110 section
+/// 11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)),
+/// including `token68` challenges, except that it doesn't allow non-ASCII
+/// characters. The `quoted-string` rule from [RFC 9110 section
+/// 5.6.4](https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.4)
+/// allows these via `obs-text`, but their meaning is ill-defined in the
+/// context of authentication.
 #[allow(clippy::module_name_repetitions)] // usually used via the crate root.
 pub struct ChallengeParser<'i> {
     input: &'i str,
