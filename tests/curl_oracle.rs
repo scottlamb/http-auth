@@ -150,6 +150,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
                 let r = server.check_nonce(r, now)?;
                 let ha1 = r.algorithm().ha1(config.username, REALM, config.password);
                 let secret = if config.use_ha1 { Secret::Ha1(&ha1) } else { Secret::Password { username: config.username, password: config.password } };
+                let secret = Some(secret);
                 server.verify(&r, Request { method, uri, body: Some(body) }, secret)
             });
             log.outcomes.push(outcome.clone());

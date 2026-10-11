@@ -33,11 +33,12 @@ fuzz_target!(|data: &str| {
     let _ = server.verify(
         &r,
         req,
-        Secret::Password {
+        Some(Secret::Password {
             username: "u",
             password: "p",
-        },
+        }),
     );
     let ha1 = Ha1::from_hex(Algorithm::Md5, "00000000000000000000000000000000").unwrap();
-    let _ = server.verify(&r, req, Secret::Ha1(&ha1));
+    let _ = server.verify(&r, req, Some(Secret::Ha1(&ha1)));
+    let _ = server.verify(&r, req, None);
 });

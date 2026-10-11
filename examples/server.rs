@@ -100,6 +100,17 @@ fn verify_basic(challenge: &Challenge, header: &str) -> (u16, Vec<Challenge>) {
     }
 }
 
+/// Looks up a user's secret; `None` if there's no such user.
+fn lookup(username: digest::Username<'_>) -> Option<Secret<'static>> {
+    match username {
+        digest::Username::Plain("mufasa") => Some(Secret::Password {
+            username: "mufasa",
+            password: "Circle of Life",
+        }),
+        _ => None,
+    }
+}
+
 fn verify_digest(
     server: &digest::Server,
     header: &str,
@@ -116,10 +127,7 @@ fn verify_digest(
                 uri,
                 body: None,
             },
-            Secret::Password {
-                username: "mufasa",
-                password: "Circle of Life",
-            },
+            lookup(r.username()),
         )
     });
     match outcome {

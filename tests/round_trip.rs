@@ -59,12 +59,13 @@ fn check(rng: &mut Rng, algorithm: Algorithm, session: bool, qop: QopSet, userha
     }
     let request = Request { method: "POST", uri: "/x?y=1", body };
     let response = server.check_nonce(digest::CredentialsRef::parse(&header).expect(&ctx), now).expect(&ctx);
-    let pw = Secret::Password { username: &username, password: &password };
+    let pw = Some(Secret::Password { username: &username, password: &password });
     assert_eq!(server.verify(&response, request, pw), Ok(()), "{}", ctx);
-    assert_eq!(server.verify(&response, request, Secret::Ha1(&algorithm.ha1(&username, &realm, &password))), Ok(()), "{}", ctx);
+    assert_eq!(server.verify(&response, request, Some(Secret::Ha1(&algorithm.ha1(&username, &realm, &password)))), Ok(()), "{}", ctx);
     for (request, secret) in [
-        (request, Secret::Password { username: &username, password: "wrong" }),
-        (request, Secret::Password { username: "wrong", password: &password }),
+        (request, Some(Secret::Password { username: &username, password: "wrong" })),
+        (request, Some(Secret::Password { username: "wrong", password: &password })),
+        (request, None),
         (Request { method: "PUT", uri: "/x?y=1", body }, pw),
     ] {
         assert_eq!(server.verify(&response, request, secret), Err(ServerError::BadCredentials), "{}", ctx);

@@ -28,14 +28,15 @@ Unicode normalization (NFC, RFC 7613).
 
 Option 2: parse, then `digest::Server::check_nonce` (built-in stateless check,
 or `digest::CredentialsRef::nonce_checked_externally` with a caller's store),
-then `verify(&resp, Request { method, uri, body }, secret)`; only a
+then `verify(&resp, Request { method, uri, body }, Option<Secret>)`; only a
 `digest::CredentialsRef<NonceChecked>` reaches `verify`.
 `digest::Server::builder(realm, algorithms)` builds a `Send + Sync` server;
 there's no default algorithm list, as none suits both modern and legacy
 clients. `challenges(stale, now)` returns one validated `Challenge` per offered
 algorithm. The secret is `Secret::Ha1(&Ha1)` (an `Ha1` carries its algorithm;
 `Ha1::from_hex` validates a stored value) or
-`Secret::Password { username, password }`.
+`Secret::Password { username, password }`; `None` (an unknown user) gets the
+same work as a wrong password, so timing doesn't reveal which users exist.
 `basic::ChallengeBuilder::new(realm)` builds the unchanging `Basic` challenge
 once, validating the realm; `basic::Credentials::parse` and `verify_password`
 complete the `Basic` server.
@@ -62,7 +63,7 @@ highest `nc` per `(nonce, cnonce)` for RFC 7616 §5.5.
 | `verify`: `uri` differs from the request-target (RFC 7616 §3.4.6) | `UriMismatch` (400) |
 | `verify`: `qop=auth-int` without `body: Some(_)` | `BodyRequired` (500) |
 | `verify`: `Secret::Ha1` for another algorithm | `SecretMismatch` (500) |
-| `verify`: username or computed `response` (constant-time) mismatch | `BadCredentials` |
+| `verify`: no secret (unknown user), username or computed `response` (constant-time) mismatch | `BadCredentials` |
 | `verify`: nonce authentic but expired, everything else valid | `Stale` |
 | `basic::Credentials::parse` (RFC 7617 §2): scheme, token68 base64, `:` split, CTLs, UTF-8 | `Malformed` / `WrongScheme` |
 

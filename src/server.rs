@@ -90,7 +90,7 @@ pub enum ServerError {
     /// algorithm than the response's: a caller bug.
     SecretMismatch,
 
-    /// Wrong username or password.
+    /// Wrong username or password, or an unknown user.
     BadCredentials,
 }
 

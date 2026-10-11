@@ -124,13 +124,10 @@ impl std::fmt::Debug for Secret<'_> {
 /// // On a request with an `Authorization` header:
 /// let response = CredentialsRef::parse(&header)?;
 /// let response = server.check_nonce(response, SystemTime::now())?;
-/// // Look up the user here (possibly with .await).
+/// // Look up the user here (possibly with .await); `None` if unknown.
 /// assert_eq!(response.username(), Username::Plain("Mufasa"));
-/// server.verify(
-///     &response,
-///     Request { method: "GET", uri: "/", body: None },
-///     Secret::Password { username: "Mufasa", password: "Circle of Life" },
-/// )?;
+/// let secret = Some(Secret::Password { username: "Mufasa", password: "Circle of Life" });
+/// server.verify(&response, Request { method: "GET", uri: "/", body: None }, secret)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -325,11 +322,16 @@ impl Server {
     /// Verifies `response` against `request` and `secret`
     /// ([RFC 7616 section 3.4](https://datatracker.ietf.org/doc/html/rfc7616#section-3.4)).
     /// Returns [`ServerError::Stale`] only if everything else verifies.
+    ///
+    /// Pass `None` for an unknown user: this returns
+    /// [`ServerError::BadCredentials`] after the same work as for a wrong
+    /// password, so response timing doesn't reveal whether the user exists
+    /// (beyond any difference in the caller's own lookup).
     pub fn verify(
         &self,
         response: &CredentialsRef<'_, NonceChecked>,
         request: Request<'_>,
-        secret: Secret<'_>,
+        secret: Option<Secret<'_>>,
     ) -> Result<(), ServerError> {
         if response.realm() != &*self.realm {
             return Err(ServerError::WrongRealm);
@@ -354,14 +356,14 @@ impl Server {
             (Qop::AuthInt, None) => return Err(ServerError::BodyRequired),
             (_, body) => body.unwrap_or(&[]),
         };
-        let ha1 = match secret {
-            Secret::Ha1(ha1) => {
+        let (ha1, known_user) = match secret {
+            Some(Secret::Ha1(ha1)) => {
                 if ha1.algorithm != algorithm {
                     return Err(ServerError::SecretMismatch);
                 }
-                Cow::Borrowed(ha1.hex.as_str())
+                (Cow::Borrowed(ha1.hex.as_str()), true)
             }
-            Secret::Password { username, password } => {
+            Some(Secret::Password { username, password }) => {
                 let same_user = match response.username() {
                     Username::Plain(u) => u == username,
                     Username::Hashed(h) => bool::from(
@@ -372,8 +374,12 @@ impl Server {
                 if !same_user {
                     return Err(ServerError::BadCredentials);
                 }
-                Cow::Owned(algorithm.ha1_hex(username, &self.realm, password))
+                (
+                    Cow::Owned(algorithm.ha1_hex(username, &self.realm, password)),
+                    true,
+                )
             }
+            None => (Cow::Owned(algorithm.ha1_hex("", &self.realm, "")), false),
         };
         let (nonce, cnonce) = (response.nonce(), response.cnonce());
         let h_a1 = h_a1(algorithm, response.session(), &ha1, nonce, cnonce);
@@ -393,7 +399,7 @@ impl Server {
             h_a2.as_bytes(),
         ]);
         let actual = response.response_hex().to_ascii_lowercase();
-        if bool::from(expected.as_bytes().ct_eq(actual.as_bytes())) {
+        if bool::from(expected.as_bytes().ct_eq(actual.as_bytes())) && known_user {
             if response.stale() {
                 Err(ServerError::Stale)
             } else {
@@ -413,11 +419,11 @@ mod tests {
     use super::*;
     use std::time::{Duration, UNIX_EPOCH};
 
-    fn pw(u: &'static str, p: &'static str) -> Secret<'static> {
-        Secret::Password {
+    fn pw(u: &'static str, p: &'static str) -> Option<Secret<'static>> {
+        Some(Secret::Password {
             username: u,
             password: p,
-        }
+        })
     }
 
     fn b() -> ServerBuilder {
@@ -441,7 +447,7 @@ mod tests {
         server: &Server,
         header: &str,
         request: Request<'_>,
-        secret: Secret<'_>,
+        secret: Option<Secret<'_>>,
     ) -> Result<(), ServerError> {
         let r = CredentialsRef::parse(header)?.nonce_checked_externally();
         server.verify(&r, request, secret)
@@ -459,7 +465,7 @@ mod tests {
         );
         for (res, secret) in [
             (RFC2617, pw("Mufasa", "Circle Of Life")),
-            (RFC2617, Secret::Ha1(&ha1)),
+            (RFC2617, Some(Secret::Ha1(&ha1))),
             (upper_resp.as_str(), pw("Mufasa", "Circle Of Life")),
         ] {
             assert_eq!(verify(&s, res, get("/dir/index.html"), secret), Ok(()));
@@ -517,7 +523,7 @@ mod tests {
             .replace(", opaque=", ", algorithm=SHA-256, opaque=")
             .replace("6629fae49393a05397450978507c4ef1", &"0".repeat(64));
         #[rustfmt::skip]
-        let cases: [(&Server, String, Request<'_>, Secret<'_>, ServerError); 14] = [
+        let cases: [(&Server, String, Request<'_>, Option<Secret<'_>>, ServerError); 15] = [
             (&s, r("realm=\"testrealm@host.com\"", "realm=\"other\""), ok, pw("Mufasa", "Circle Of Life"), WrongRealm),
             (&sha, RFC2617.into(), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
             (&s, r("opaque=", "algorithm=MD5-sess, opaque="), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
@@ -527,8 +533,9 @@ mod tests {
             (&s, r("username=\"Mufasa\"", &format!("username=\"{}\", userhash=true", h)), ok, pw("Mufasa", "Circle Of Life"), UnofferedUserhash),
             (&s, RFC2617.into(), get("/dir/other.html"), pw("Mufasa", "Circle Of Life"), UriMismatch),
             (&s, r("qop=auth", "qop=auth-int"), ok, pw("Mufasa", "Circle Of Life"), BodyRequired),
-            (&s, RFC2617.into(), ok, Secret::Ha1(&sha512_256), SecretMismatch),
-            (&sha, sha_header, ok, Secret::Ha1(&sha512_256), SecretMismatch),
+            (&s, RFC2617.into(), ok, Some(Secret::Ha1(&sha512_256)), SecretMismatch),
+            (&sha, sha_header, ok, Some(Secret::Ha1(&sha512_256)), SecretMismatch),
+            (&s, RFC2617.into(), ok, None, BadCredentials),
             (&s, RFC2617.into(), ok, pw("Mufasa", "Circle of Life"), BadCredentials),
             (&s, RFC2617.into(), ok, pw("Simba", "Circle Of Life"), BadCredentials),
             (&uh, r("username=\"Mufasa\"", &format!("username=\"{}\", userhash=true", simba)), ok, pw("Mufasa", "Circle Of Life"), BadCredentials),
