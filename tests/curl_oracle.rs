@@ -216,7 +216,7 @@ fn digest_algorithms() {
     let Some(version) = curl_version_or_skip() else { return; };
     // curl before 8.7.0 computed SHA-512-256 digests with SHA-256 (fixed in curl commit e3461bbd0).
     let mut algorithms = vec![Algorithm::Md5, Algorithm::Sha256];
-    if version >= (8, 7) { algorithms.push(Algorithm::Sha512Trunc256); }
+    if version >= (8, 7) { algorithms.push(Algorithm::Sha512_256); }
     for algorithm in &algorithms {
         for session in [false, true] {
             let s = server(&[*algorithm]).session(session).build().unwrap();

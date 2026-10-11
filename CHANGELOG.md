@@ -8,6 +8,8 @@
     11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
 *   `ParamValue::to_unescaped` now returns `std::borrow::Cow<str>` instead of
     `String`.
+*   `digest::Algorithm::Sha512Trunc256` is renamed to `Sha512_256`, matching
+    the `sha2` crate's naming.
 
 ### Added
 

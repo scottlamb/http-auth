@@ -435,12 +435,12 @@ mod tests {
             assert_eq!(verify(&s, header, get("/dir/index.html"), secret), Ok(()));
         }
         let builder = DigestServer::builder("api@example.org")
-            .algorithms(&[Algorithm::Sha512Trunc256])
+            .algorithms(&[Algorithm::Sha512_256])
             .opaque("HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS");
         let s = builder.clone().userhash(true).build().unwrap();
         let user = "J\u{e4}s\u{f8}n Doe";
         #[rustfmt::skip]
-        assert_eq!(s.hash_username(user, Algorithm::Sha512Trunc256), "793263caabb707a56211940d90411ea4a575adeccb7e360aeb624ed06ece9b0b");
+        assert_eq!(s.hash_username(user, Algorithm::Sha512_256), "793263caabb707a56211940d90411ea4a575adeccb7e360aeb624ed06ece9b0b");
         let pw = pw(user, "Secret, or not?");
         assert_eq!(verify(&s, RFC7616_USERHASH, get("/doe.json"), pw), Ok(()));
         #[rustfmt::skip]

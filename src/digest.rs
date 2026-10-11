@@ -521,7 +521,7 @@ impl std::fmt::Debug for DigestClient {
 pub enum Algorithm {
     Md5,
     Sha256,
-    Sha512Trunc256,
+    Sha512_256,
 }
 
 impl Algorithm {
@@ -533,8 +533,8 @@ impl Algorithm {
             ("MD5-sess", Algorithm::Md5, true),
             ("SHA-256", Algorithm::Sha256, false),
             ("SHA-256-sess", Algorithm::Sha256, true),
-            ("SHA-512-256", Algorithm::Sha512Trunc256, false),
-            ("SHA-512-256-sess", Algorithm::Sha512Trunc256, true),
+            ("SHA-512-256", Algorithm::Sha512_256, false),
+            ("SHA-512-256-sess", Algorithm::Sha512_256, true),
         ];
         ALL.iter()
             .find(|(name, _, _)| name.eq_ignore_ascii_case(s))
@@ -549,8 +549,8 @@ impl Algorithm {
             (Algorithm::Md5, true) => "MD5-sess",
             (Algorithm::Sha256, false) => "SHA-256",
             (Algorithm::Sha256, true) => "SHA-256-sess",
-            (Algorithm::Sha512Trunc256, false) => "SHA-512-256",
-            (Algorithm::Sha512Trunc256, true) => "SHA-512-256-sess",
+            (Algorithm::Sha512_256, false) => "SHA-512-256",
+            (Algorithm::Sha512_256, true) => "SHA-512-256-sess",
         }
     }
 
@@ -559,7 +559,7 @@ impl Algorithm {
     pub(crate) fn hex_len(&self) -> usize {
         match self {
             Algorithm::Md5 => 32,
-            Algorithm::Sha256 | Algorithm::Sha512Trunc256 => 64,
+            Algorithm::Sha256 | Algorithm::Sha512_256 => 64,
         }
     }
 
@@ -575,7 +575,7 @@ impl Algorithm {
         match self {
             Algorithm::Md5 => h(md5::Md5::new(), parts),
             Algorithm::Sha256 => h(sha2::Sha256::new(), parts),
-            Algorithm::Sha512Trunc256 => h(sha2::Sha512_256::new(), parts),
+            Algorithm::Sha512_256 => h(sha2::Sha512_256::new(), parts),
         }
     }
 }
@@ -824,7 +824,7 @@ pub(crate) mod tests {
         );
         assert_eq!(ctxs[0].stale, false);
         assert_eq!(ctxs[0].userhash, true);
-        assert_eq!(ctxs[0].algorithm, Algorithm::Sha512Trunc256);
+        assert_eq!(ctxs[0].algorithm, Algorithm::Sha512_256);
         assert_eq!(ctxs[0].qop.0, Qop::Auth as u8);
         assert_eq!(ctxs[0].nc, 0);
         let params = crate::PasswordParams {

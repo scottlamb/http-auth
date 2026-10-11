@@ -82,7 +82,7 @@ fn check(rng: &mut Rng, algorithm: Algorithm, session: bool, qop: QopSet, userha
 #[test]
 fn digest_matrix() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-    for algorithm in [Algorithm::Md5, Algorithm::Sha256, Algorithm::Sha512Trunc256] {
+    for algorithm in [Algorithm::Md5, Algorithm::Sha256, Algorithm::Sha512_256] {
         for session in [false, true] {
             for qop in [
                 QopSet::from(Qop::Auth),
