@@ -17,7 +17,7 @@ nom = "7.0"
 
 [dependencies.http-auth]
 path = ".."
-features = ["trace"]
+features = ["trace", "server"]
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -26,5 +26,23 @@ members = ["."]
 [[bin]]
 name = "parse_challenges"
 path = "fuzz_targets/parse_challenges.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_credentials"
+path = "fuzz_targets/parse_credentials.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "render_challenges"
+path = "fuzz_targets/render_challenges.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "digest_response"
+path = "fuzz_targets/digest_response.rs"
 test = false
 doc = false

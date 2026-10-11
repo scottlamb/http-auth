@@ -14,7 +14,7 @@
 
 use std::{fmt::Display, ops::Range};
 
-use crate::{ChallengeRef, ParamValue};
+use crate::{AuthBody, ChallengeRef, CredentialsRef, ParamValue};
 
 use crate::{char_classes, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 
@@ -41,18 +41,18 @@ macro_rules! trace {
 /// ## Example
 ///
 /// ```rust
-/// use http_auth::{parser::ChallengeParser, ChallengeRef, ParamValue};
-/// let challenges = "UnsupportedSchemeA, Basic realm=\"foo\", error error";
+/// use http_auth::{parser::ChallengeParser, AuthBody, ChallengeRef, ParamValue};
+/// let challenges = "UnsupportedSchemeA, Basic realm=\"foo\", error realm=\"unclosed";
 /// let mut parser = ChallengeParser::new(challenges);
 /// let c = parser.next().unwrap().unwrap();
 /// assert_eq!(c, ChallengeRef {
 ///     scheme: "UnsupportedSchemeA",
-///     params: vec![],
+///     body: AuthBody::Params(vec![]),
 /// });
 /// let c = parser.next().unwrap().unwrap();
 /// assert_eq!(c, ChallengeRef {
 ///     scheme: "Basic",
-///     params: vec![("realm", ParamValue::try_from_escaped("foo").unwrap())],
+///     body: AuthBody::Params(vec![("realm", ParamValue::try_from_escaped("foo").unwrap())]),
 /// });
 /// let c = parser.next().unwrap().unwrap_err();
 /// ```
@@ -67,26 +67,14 @@ macro_rules! trace {
 ///     3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6),
 ///     which allows these via `obs-text`, but the meaning is ill-defined in
 ///     the context of RFC 7235.
-/// *   Doesn't allow `token68`, which as far as I know has never been and will
-///     never be used in a `challenge`:
-///     *   [RFC 2617](https://datatracker.ietf.org/doc/html/rfc2617) never
-///         allowed `token68` for challenges.
-///     *   [RFC 7235 Appendix
-///         A](https://datatracker.ietf.org/doc/html/rfc7235#appendix-A) says
-///         `token68` "was added for consistency with legacy authentication
-///         schemes such as `Basic`", but `Basic` only uses `token68` in
-///         `credential`, not `challenge`.
-///     *   [RFC 7235 section
-///         5.1.2](https://datatracker.ietf.org/doc/html/rfc7235#section-5.1.2)
-///         says "new schemes ought to use the `auth-param` syntax instead
-///         [of `token68`], because otherwise future extensions will be
-///         impossible."
-///     *   No scheme in the [registry](https://www.iana.org/assignments/http-authschemes/http-authschemes.xhtml)
-///         uses `token68` challenges as of 2021-10-19.
+/// *   Accepts `token68` challenges ([RFC 9110 section 11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
 pub struct ChallengeParser<'i> {
     input: &'i str,
     pos: usize,
     state: State<'i>,
+
+    /// Parses one item without list commas, as in `credentials`.
+    single: bool,
 }
 
 impl<'i> ChallengeParser<'i> {
@@ -98,6 +86,14 @@ impl<'i> ChallengeParser<'i> {
                 challenge: None,
                 next: Possibilities(P_SCHEME),
             },
+            single: false,
+        }
+    }
+
+    fn single(input: &'i str) -> Self {
+        ChallengeParser {
+            single: true,
+            ..Self::new(input)
         }
     }
 }
@@ -237,6 +233,14 @@ impl<'i> Iterator for ChallengeParser<'i> {
                             challenge,
                             next: Possibilities(next.0 & !P_EOF),
                         }
+                    } else if b == b',' && self.single {
+                        if (next.0 & P_COMMA_PARAM_KEY) == 0 {
+                            return Some(Err(Error::invalid_byte(self.input, self.pos)));
+                        }
+                        self.state = State::PreToken {
+                            challenge,
+                            next: Possibilities(P_WHITESPACE | P_PARAM_KEY),
+                        }
                     } else if b == b',' {
                         let next = Possibilities(
                             next.0
@@ -285,10 +289,11 @@ impl<'i> Iterator for ChallengeParser<'i> {
                                 cur,
                             };
                         } else {
-                            // Ending a scheme, starting a parameter key without an intermediate comma.
-                            // The whitespace between must be exactly one space.
+                            // Ending a scheme, starting its body after 1*SP.
+                            let gap = &self.input[token_pos.end..self.pos];
                             if (cur.0 & P_SCHEME) == 0
-                                || &self.input[token_pos.end..self.pos] != " "
+                                || gap.is_empty()
+                                || gap.bytes().any(|b| b != b' ')
                             {
                                 return Some(Err(Error::invalid_byte(self.input, self.pos)));
                             }
@@ -304,7 +309,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                         }
                     } else {
                         match b {
-                            b',' if (cur.0 & P_SCHEME) != 0 => {
+                            b',' if (cur.0 & P_SCHEME) != 0 && !self.single => {
                                 self.state = State::PreToken {
                                     challenge: Some(ChallengeRef::new(&self.input[token_pos])),
                                     next: Possibilities(
@@ -332,12 +337,47 @@ impl<'i> Iterator for ChallengeParser<'i> {
                                 }
                             },
 
+                            b' ' | b'\t' if (cur.0 & P_SCHEME) != 0 => {
+                                let rest = &self.input[self.pos..];
+                                let ws = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+                                if !rest[..ws].contains('\t') {
+                                    // A token68 body follows 1*SP and may start with '/'.
+                                    if let Some(end) = token68_end(self.input, self.pos + ws) {
+                                        self.state = State::PreToken {
+                                            challenge: Some(ChallengeRef {
+                                                scheme: &self.input[token_pos],
+                                                body: AuthBody::Token68(
+                                                    &self.input[self.pos + ws..end],
+                                                ),
+                                            }),
+                                            next: Possibilities(if self.single {
+                                                P_EOF
+                                            } else {
+                                                P_WHITESPACE | P_SCHEME | P_COMMA_EOF | P_EOF
+                                            }),
+                                        };
+                                        self.pos = end;
+                                        if let Some(c) = challenge {
+                                            return Some(Ok(c));
+                                        }
+                                        continue;
+                                    }
+                                }
+                                self.pos += ws;
+                                self.state = State::Token {
+                                    challenge,
+                                    token_pos,
+                                    cur,
+                                };
+                                continue;
+                            }
+
                             b' ' | b'\t' => {
                                 self.state = State::Token {
                                     challenge,
                                     token_pos,
                                     cur,
-                                }
+                                };
                             }
 
                             _ => return Some(Err(Error::invalid_byte(self.input, self.pos))),
@@ -381,35 +421,39 @@ impl<'i> Iterator for ChallengeParser<'i> {
                             value_start,
                         };
                     } else if (classes & C_OWS) != 0 {
-                        challenge.params.push((
+                        push_param(
+                            &mut challenge,
                             &self.input[key_pos],
                             ParamValue {
                                 escapes: 0,
                                 escaped: &self.input[value_start..self.pos],
                             },
-                        ));
+                        );
                         self.state = State::PreToken {
                             challenge: Some(challenge),
                             next: Possibilities(P_WHITESPACE | P_COMMA_PARAM_KEY | P_COMMA_EOF),
                         };
                     } else if b == b',' {
-                        challenge.params.push((
+                        push_param(
+                            &mut challenge,
                             &self.input[key_pos],
                             ParamValue {
                                 escapes: 0,
                                 escaped: &self.input[value_start..self.pos],
                             },
-                        ));
+                        );
                         self.state = State::PreToken {
                             challenge: Some(challenge),
-                            next: Possibilities(
+                            next: Possibilities(if self.single {
+                                P_WHITESPACE | P_PARAM_KEY
+                            } else {
                                 P_WHITESPACE
                                     | P_PARAM_KEY
                                     | P_SCHEME
                                     | P_EOF
                                     | P_COMMA_PARAM_KEY
-                                    | P_COMMA_EOF,
-                            ),
+                                    | P_COMMA_EOF
+                            }),
                         };
                     } else {
                         return Some(Err(Error::invalid_byte(self.input, self.pos)));
@@ -443,13 +487,14 @@ impl<'i> Iterator for ChallengeParser<'i> {
                             in_backslash: true,
                         };
                     } else if b == b'"' {
-                        challenge.params.push((
+                        push_param(
+                            &mut challenge,
                             &self.input[key_pos],
                             ParamValue {
                                 escapes,
                                 escaped: &self.input[value_start..self.pos],
                             },
-                        ));
+                        );
                         self.state = State::PreToken {
                             challenge: Some(challenge),
                             next: Possibilities(
@@ -501,7 +546,9 @@ impl<'i> Iterator for ChallengeParser<'i> {
                         error: "unexpected EOF expecting =",
                     }));
                 }
-                if token_pos.end != self.input.len() && &self.input[token_pos.end..] != " " {
+                if token_pos.end != self.input.len()
+                    && self.input[token_pos.end..].bytes().any(|b| b != b' ')
+                {
                     return Some(Err(Error {
                         input: self.input,
                         pos: self.input.len(),
@@ -532,13 +579,14 @@ impl<'i> Iterator for ChallengeParser<'i> {
                 value_start,
             } => {
                 trace!("eof, ParamUnquotedValue");
-                challenge.params.push((
+                push_param(
+                    &mut challenge,
                     &self.input[key_pos],
                     ParamValue {
                         escapes: 0,
                         escaped: &self.input[value_start..],
                     },
-                ));
+                );
                 return Some(Ok(challenge));
             }
             State::ParamQuotedValue { .. } => {
@@ -556,11 +604,101 @@ impl<'i> Iterator for ChallengeParser<'i> {
 
 impl std::iter::FusedIterator for ChallengeParser<'_> {}
 
+fn push_param<'i>(challenge: &mut ChallengeRef<'i>, key: &'i str, value: ParamValue<'i>) {
+    match &mut challenge.body {
+        AuthBody::Params(p) => p.push((key, value)),
+        AuthBody::Token68(_) => unreachable!(),
+    }
+}
+
+/// Parses `Authorization` or `Proxy-Authorization` credentials as in
+/// [RFC 9110 section 11.4](https://datatracker.ietf.org/doc/html/rfc9110#section-11.4):
+///
+/// ```text
+/// credentials = auth-scheme [ 1*SP ( token68 / #auth-param ) ]
+/// token68     = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="
+/// ```
+///
+/// Trims surrounding OWS. Rejects empty list elements. Doesn't check for
+/// duplicate parameters.
+///
+/// ```rust
+/// use http_auth::{parse_credentials, AuthBody};
+/// let c = parse_credentials("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
+/// assert_eq!(c.scheme, "Basic");
+/// assert_eq!(c.body, AuthBody::Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="));
+/// ```
+pub fn parse_credentials(input: &str) -> Result<CredentialsRef<'_>, Error<'_>> {
+    let input = input.trim_matches(|c| c == ' ' || c == '\t');
+    let c = ChallengeParser::single(input)
+        .next()
+        .expect("single mode yields one item")?;
+    Ok(CredentialsRef {
+        scheme: c.scheme,
+        body: c.body,
+    })
+}
+
+/// If `input[start..]` is a `token68` followed by a comma, OWS then a comma, or
+/// EOF, returns its end offset.
+fn token68_end(input: &str, start: usize) -> Option<usize> {
+    let rest = &input[start..];
+    let body = rest.trim_start_matches(|c: char| {
+        c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '+' | '/')
+    });
+    if body.len() == rest.len() {
+        return None;
+    }
+    let end = start + rest.len() - body.trim_start_matches('=').len();
+    let after = input[end..].trim_start_matches([' ', '\t']);
+    (after.is_empty() || after.starts_with(',')).then_some(end)
+}
+
+/// Returns the value of a hex digit.
+#[cfg(all(feature = "server", feature = "digest-scheme"))]
+fn hex_val(b: u8) -> Option<u8> {
+    char::from(b).to_digit(16).map(|d| d as u8)
+}
+
+/// Decodes an [RFC 8187](https://datatracker.ietf.org/doc/html/rfc8187)
+/// `ext-value`: `charset "'" [ language ] "'" value-chars`. Accepts the
+/// `UTF-8` charset (required) and `ISO-8859-1`.
+#[cfg(all(feature = "server", feature = "digest-scheme"))]
+pub(crate) fn decode_ext_value(s: &str) -> Option<String> {
+    let (charset, rest) = s.split_once('\'')?;
+    let (language, value) = rest.split_once('\'')?;
+    if !language
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut it = value.bytes();
+    while let Some(b) = it.next() {
+        if b == b'%' {
+            let hi = it.next().and_then(hex_val)?;
+            let lo = it.next().and_then(hex_val)?;
+            bytes.push((hi << 4) | lo);
+        } else if (char_classes(b) & crate::table::C_ATTR) != 0 {
+            bytes.push(b);
+        } else {
+            return None;
+        }
+    }
+    if charset.eq_ignore_ascii_case("UTF-8") {
+        String::from_utf8(bytes).ok()
+    } else if charset.eq_ignore_ascii_case("ISO-8859-1") {
+        Some(bytes.into_iter().map(char::from).collect())
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{ChallengeRef, ParamValue};
-
-    // A couple basic tests. The fuzz testing is far more comprehensive.
+    use crate::parse_credentials;
+    use crate::{AuthBody, ChallengeRef, ParamValue};
 
     #[test]
     fn multi_challenge() {
@@ -573,15 +711,15 @@ mod tests {
             &[
                 ChallengeRef {
                     scheme: "Newauth",
-                    params: vec![
+                    body: AuthBody::Params(vec![
                         ("realm", ParamValue::new(0, "apps")),
                         ("type", ParamValue::new(0, "1")),
                         ("title", ParamValue::new(2, r#"Login to \"apps\""#)),
-                    ],
+                    ]),
                 },
                 ChallengeRef {
                     scheme: "Basic",
-                    params: vec![("realm", ParamValue::new(0, "simple")),],
+                    body: AuthBody::Params(vec![("realm", ParamValue::new(0, "simple"))]),
                 },
             ]
         );
@@ -591,5 +729,113 @@ mod tests {
     fn empty() {
         crate::parse_challenges("").unwrap_err();
         crate::parse_challenges(",").unwrap_err();
+    }
+
+    #[test]
+    fn token68_challenges() {
+        assert_eq!(
+            crate::parse_challenges("Basic abc=").unwrap(),
+            vec![ChallengeRef {
+                scheme: "Basic",
+                body: AuthBody::Token68("abc="),
+            }]
+        );
+        assert_eq!(
+            crate::parse_challenges("Negotiate abc, Basic realm=\"x\"").unwrap(),
+            vec![
+                ChallengeRef {
+                    scheme: "Negotiate",
+                    body: AuthBody::Token68("abc"),
+                },
+                ChallengeRef {
+                    scheme: "Basic",
+                    body: AuthBody::Params(vec![("realm", ParamValue::new(0, "x"))]),
+                },
+            ]
+        );
+        assert_eq!(
+            crate::parse_challenges("Basic  abc==").unwrap(),
+            vec![ChallengeRef {
+                scheme: "Basic",
+                body: AuthBody::Token68("abc=="),
+            }]
+        );
+    }
+
+    #[test]
+    fn credentials() {
+        use AuthBody::{Params, Token68};
+        let cases: &[(&str, AuthBody<'_>)] = &[
+            (
+                "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+                Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="),
+            ),
+            ("Basic   abc=", Token68("abc=")),
+            ("Digest a", Token68("a")),
+            ("Negotiate", Params(vec![])),
+            ("Basic ", Params(vec![])),
+            ("Basic \t ", Params(vec![])),
+            ("  Basic   abc=  ", Token68("abc=")),
+            (
+                r#"Digest username="Mufasa", qop=auth, nc=00000001"#,
+                Params(vec![
+                    ("username", ParamValue::new(0, "Mufasa")),
+                    ("qop", ParamValue::new(0, "auth")),
+                    ("nc", ParamValue::new(0, "00000001")),
+                ]),
+            ),
+            (
+                r#"Digest  a="x \"y\"",b = c"#,
+                Params(vec![
+                    ("a", ParamValue::new(2, r#"x \"y\""#)),
+                    ("b", ParamValue::new(0, "c")),
+                ]),
+            ),
+            (
+                "\tDigest a=b ,\tc=d \t",
+                Params(vec![
+                    ("a", ParamValue::new(0, "b")),
+                    ("c", ParamValue::new(0, "d")),
+                ]),
+            ),
+        ];
+        for (input, body) in cases {
+            let c = parse_credentials(input).unwrap();
+            assert_eq!(&c.body, body, "{:?}", input);
+        }
+        for input in [
+            "",
+            ",Basic abc",
+            "Basic abc,",
+            "Basic abc, Digest a=b",
+            "Negotiate,",
+            "Digest ,a=b",
+            "Digest a=b,",
+            "Digest a=b, ",
+            "Digest a=b,, c=d",
+            "Digest a=b, Basic",
+            "Digest a=b, Basic xyz",
+            r#"Digest a="b","#,
+        ] {
+            assert!(parse_credentials(input).is_err(), "{:?}", input);
+        }
+    }
+
+    #[test]
+    fn long_space_run_is_linear() {
+        let mut s = String::from("Foo");
+        s.push_str(&" ".repeat(200_000));
+        s.push_str("a=b");
+        let challenges = crate::parse_challenges(&s).unwrap();
+        assert_eq!(challenges.len(), 1);
+        assert!(matches!(&challenges[0].body, AuthBody::Params(p) if p.len() == 1));
+        let c = parse_credentials(&s).unwrap();
+        assert!(matches!(&c.body, AuthBody::Params(p) if p.len() == 1));
+        let mut s = String::from("Foo");
+        s.push_str(&" ".repeat(200_000));
+        s.push('\t');
+        s.push_str(&" ".repeat(200_000));
+        s.push_str("a=b");
+        let _ = crate::parse_challenges(&s);
     }
 }
