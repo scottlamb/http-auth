@@ -42,7 +42,7 @@ In order:
     the client and server side; future expansion is likely.)
 5.  **ergonomic.** Creating a client for responding to a password challenge is
     a one-liner from a string header or a
-    [`http::header::GetAll`](https://docs.rs/http/0.2.5/http/header/struct.GetAll.html).
+    [`http::header::GetAll`](https://docs.rs/http/1/http/header/struct.GetAll.html).
 6.  **fast enough.** HTTP authentication is a small part of a real program, and
     `http-auth`'s CPU usage should never be noticeable. For `Digest`'s
     cryptographic operations, it uses popular optimized crates. In other

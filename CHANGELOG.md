@@ -27,6 +27,8 @@
     `&http::HeaderValue`, or `http::header::GetAll` (via the sealed
     `ChallengeSource` trait, which callers don't need to import). The
     `HeaderValue` trait and `ToStrError` are removed.
+*   the `http` feature (`http` crate version 0.2) is removed; use `http10`
+    (`http` crate version 1.x).
 
 ### Added
 

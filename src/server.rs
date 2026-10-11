@@ -22,19 +22,12 @@ impl std::fmt::Display for Challenge {
     }
 }
 
-#[cfg(feature = "http")]
+#[cfg(feature = "http10")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http10")))]
 impl From<Challenge> for http::HeaderValue {
     fn from(c: Challenge) -> Self {
         use std::convert::TryFrom as _;
         http::HeaderValue::try_from(c.0).expect("Challenge is always a valid header value")
-    }
-}
-
-#[cfg(feature = "http10")]
-impl From<Challenge> for http10::HeaderValue {
-    fn from(c: Challenge) -> Self {
-        use std::convert::TryFrom as _;
-        http10::HeaderValue::try_from(c.0).expect("Challenge is always a valid header value")
     }
 }
 
@@ -157,7 +150,7 @@ pub(crate) fn check_realm(realm: &str) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "http")]
+    #[cfg(feature = "http10")]
     #[test]
     fn into_http_header_value() {
         use crate::render::HeaderWriter;

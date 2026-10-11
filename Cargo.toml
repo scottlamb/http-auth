@@ -27,6 +27,9 @@ server = ["hmac", "sha2", "subtle"]
 basic-scheme = ["base64"]
 digest-scheme = ["digest", "hex", "md-5", "rand", "sha2"]
 
+# Enable conversions from `http` crate (version 1.x) types.
+http10 = ["dep:http"]
+
 # Enable per-byte trace! calls in parsing (causing code bloat). This is only
 # meant for testing http-auth itself.
 trace = ["log"]
@@ -44,8 +47,7 @@ base64 = { version = "0.22.0", optional = true }
 digest = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 hmac = { version = "0.12", optional = true }
-http = { version = "0.2.5", optional = true }
-http10 = { package = "http", version = "1.0.0", optional = true }
+http = { version = "1.0.0", optional = true }
 log = {version = "0.4", optional = true }
 md-5 = { version = "0.10", optional = true }
 memchr = "2.4.1"
