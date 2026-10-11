@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use super::response::{CredentialsRef, NonceChecked, Unchecked, Username};
 use super::{h_a1, h_a2, is_hex, nonce, nonce::NonceKey, Algorithm, Qop, QopSet};
 use crate::render::{is_quotable, HeaderWriter};
-use crate::server::{check_realm, Challenge, Error};
+use crate::server::{check_realm, Challenge, ServerError};
 use subtle::ConstantTimeEq as _;
 
 /// The request being authenticated, as the server received it.
@@ -88,7 +88,7 @@ impl std::fmt::Debug for Secret<'_> {
 ///     Request { method: "GET", uri: "/", body: None },
 ///     Secret::Password { username: "Mufasa", password: "Circle of Life" },
 /// )?;
-/// # Ok::<(), http_auth::server::Error>(())
+/// # Ok::<(), http_auth::ServerError>(())
 /// ```
 ///
 /// ## Security considerations
@@ -171,8 +171,8 @@ impl ServerBuilder {
     }
 
     /// Validates the configuration.
-    pub fn build(self) -> Result<Server, Error> {
-        use Error::InvalidConfig;
+    pub fn build(self) -> Result<Server, ServerError> {
+        use ServerError::InvalidConfig;
         let s = self.0;
         if s.algorithms.is_empty() {
             return Err(InvalidConfig("no algorithms"));
@@ -222,7 +222,7 @@ impl Server {
     }
 
     /// Returns one challenge per offered algorithm, in preference order,
-    /// sharing a fresh nonce. Set `stale` after [`Error::Stale`].
+    /// sharing a fresh nonce. Set `stale` after [`ServerError::Stale`].
     pub fn challenges(&self, stale: bool, now: SystemTime) -> Vec<Challenge> {
         let nonce = nonce::issue(&self.nonce_key.0, &self.realm, now, rand::random());
         let qop = [Qop::Auth, Qop::AuthInt]
@@ -257,13 +257,13 @@ impl Server {
             .collect()
     }
 
-    /// Checks the nonce's HMAC: [`Error::BadNonce`] if not issued by
+    /// Checks the nonce's HMAC: [`ServerError::BadNonce`] if not issued by
     /// this server. An expired nonce is marked [`CredentialsRef::stale`].
     pub fn check_nonce<'i>(
         &self,
         response: CredentialsRef<'i, Unchecked>,
         now: SystemTime,
-    ) -> Result<CredentialsRef<'i, NonceChecked>, Error> {
+    ) -> Result<CredentialsRef<'i, NonceChecked>, ServerError> {
         let validity = nonce::check(
             &self.nonce_key.0,
             &self.realm,
@@ -282,41 +282,41 @@ impl Server {
 
     /// Verifies `response` against `request` and `secret`
     /// ([RFC 7616 section 3.4](https://datatracker.ietf.org/doc/html/rfc7616#section-3.4)).
-    /// Returns [`Error::Stale`] only if everything else verifies.
+    /// Returns [`ServerError::Stale`] only if everything else verifies.
     pub fn verify(
         &self,
         response: &CredentialsRef<'_, NonceChecked>,
         request: Request<'_>,
         secret: Secret<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ServerError> {
         if response.realm() != &*self.realm {
-            return Err(Error::WrongRealm);
+            return Err(ServerError::WrongRealm);
         }
         let algorithm = response.algorithm();
         if response.session() != self.session || !self.algorithms.contains(&algorithm) {
-            return Err(Error::UnofferedAlgorithm);
+            return Err(ServerError::UnofferedAlgorithm);
         }
         if !self.qop.contains(response.qop()) {
-            return Err(Error::UnofferedQop);
+            return Err(ServerError::UnofferedQop);
         }
         if response.opaque() != self.opaque.as_deref() {
-            return Err(Error::WrongOpaque);
+            return Err(ServerError::WrongOpaque);
         }
         if response.userhash() && !self.userhash {
-            return Err(Error::UnofferedUserhash);
+            return Err(ServerError::UnofferedUserhash);
         }
         if response.uri() != request.uri {
-            return Err(Error::UriMismatch);
+            return Err(ServerError::UriMismatch);
         }
         let body = match (response.qop(), request.body) {
-            (Qop::AuthInt, None) => return Err(Error::BodyRequired),
+            (Qop::AuthInt, None) => return Err(ServerError::BodyRequired),
             (_, body) => body.unwrap_or(&[]),
         };
         let ha1 = match secret {
             Secret::Ha1(ha1) => {
                 if !is_hex(ha1, algorithm.hex_len()) || ha1.bytes().any(|b| b.is_ascii_uppercase())
                 {
-                    return Err(Error::SecretMismatch);
+                    return Err(ServerError::SecretMismatch);
                 }
                 Cow::Borrowed(ha1)
             }
@@ -329,7 +329,7 @@ impl Server {
                     ),
                 };
                 if !same_user {
-                    return Err(Error::BadCredentials);
+                    return Err(ServerError::BadCredentials);
                 }
                 Cow::Owned(algorithm.ha1(username, &self.realm, password))
             }
@@ -354,12 +354,12 @@ impl Server {
         let actual = response.response_hex().to_ascii_lowercase();
         if bool::from(expected.as_bytes().ct_eq(actual.as_bytes())) {
             if response.stale() {
-                Err(Error::Stale)
+                Err(ServerError::Stale)
             } else {
                 Ok(())
             }
         } else {
-            Err(Error::BadCredentials)
+            Err(ServerError::BadCredentials)
         }
     }
 }
@@ -400,7 +400,7 @@ mod tests {
         header: &str,
         request: Request<'_>,
         secret: Secret<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ServerError> {
         let r = CredentialsRef::parse(header)?.nonce_checked_externally();
         server.verify(&r, request, secret)
     }
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn verify_errors() {
-        use Error::*;
+        use ServerError::*;
         let s = s();
         let ok = get("/dir/index.html");
         let r = |from: &str, to: &str| RFC2617.replace(from, to);
@@ -467,7 +467,7 @@ mod tests {
             .ha1("Mufasa", "testrealm@host.com", "Circle Of Life")
             .to_ascii_uppercase();
         #[rustfmt::skip]
-        let cases: [(&Server, String, Request<'_>, Secret<'_>, Error); 15] = [
+        let cases: [(&Server, String, Request<'_>, Secret<'_>, ServerError); 15] = [
             (&s, r("realm=\"testrealm@host.com\"", "realm=\"other\""), ok, pw("Mufasa", "Circle Of Life"), WrongRealm),
             (&sha, RFC2617.into(), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
             (&s, r("opaque=", "algorithm=MD5-sess, opaque="), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
@@ -557,7 +557,7 @@ mod tests {
             b().nonce_lifetime(Duration::from_millis(999)).build(),
             b().nonce_lifetime(Duration::from_secs(0)).build(),
         ] {
-            assert!(matches!(result, Err(Error::InvalidConfig(_))));
+            assert!(matches!(result, Err(ServerError::InvalidConfig(_))));
         }
     }
 
@@ -582,7 +582,7 @@ mod tests {
             .stale());
         let other = Server::builder("r").build().unwrap();
         #[rustfmt::skip]
-        assert_eq!(other.check_nonce(CredentialsRef::parse(&header).unwrap(), t0).unwrap_err(), Error::BadNonce);
+        assert_eq!(other.check_nonce(CredentialsRef::parse(&header).unwrap(), t0).unwrap_err(), ServerError::BadNonce);
     }
 
     #[test]
@@ -594,7 +594,10 @@ mod tests {
         let c = &s.challenges(false, t0)[0];
         let c = &crate::parse_challenges(c.as_str()).unwrap()[0];
         let mut client = crate::digest::Client::try_from(c).unwrap();
-        for (password, expected) in [("p", Error::Stale), ("q", Error::BadCredentials)] {
+        for (password, expected) in [
+            ("p", ServerError::Stale),
+            ("q", ServerError::BadCredentials),
+        ] {
             let header = client
                 .respond(&crate::PasswordParams {
                     username: "u",

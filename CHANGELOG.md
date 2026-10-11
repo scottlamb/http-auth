@@ -34,7 +34,8 @@
 
 *   server support behind the `server` feature: `basic::Server`,
     `basic::Credentials`, `digest::Server`, `digest::CredentialsRef`,
-    `server::Challenge`, `server::Error`.
+    `Challenge`, `ServerError`. `PasswordClientBuilder::with` also accepts a
+    `&Challenge`.
 *   `parse_credentials` and `CredentialsRef` for `Authorization` /
     `Proxy-Authorization` values.
 *   `impl Display for ChallengeRef`.

@@ -15,8 +15,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use http_auth::digest::{Algorithm, Secret};
-use http_auth::server::Challenge;
-use http_auth::{basic, digest, server};
+use http_auth::{basic, digest, Challenge, ServerError};
 use http_body_util::Empty;
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{AUTHORIZATION, WWW_AUTHENTICATE};
@@ -89,7 +88,7 @@ fn verify_basic(server: &basic::Server, header: &str) -> (u16, Vec<Challenge>) {
         if c.username() == "aladdin" && c.verify_password("open sesame") {
             Ok(())
         } else {
-            Err(server::Error::BadCredentials)
+            Err(ServerError::BadCredentials)
         }
     });
     match outcome {
@@ -122,7 +121,7 @@ fn verify_digest(
     });
     match outcome {
         Ok(()) => (200, vec![]),
-        Err(server::Error::Stale) => (401, server.challenges(true, now)),
+        Err(ServerError::Stale) => (401, server.challenges(true, now)),
         Err(e) => (e.status(), server.challenges(false, now)),
     }
 }

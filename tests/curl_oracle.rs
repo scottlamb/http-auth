@@ -21,8 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use http_auth::digest::{Algorithm, Qop, Request, Secret, Username};
-use http_auth::server::Challenge;
-use http_auth::{basic, digest, server};
+use http_auth::{basic, digest, Challenge, ServerError};
 
 const REALM: &str = "http-auth@example.org";
 
@@ -54,7 +53,7 @@ impl Config {
 #[derive(Debug, Default)]
 struct Log {
     requests: usize,
-    outcomes: Vec<Result<(), server::Error>>,
+    outcomes: Vec<Result<(), ServerError>>,
     algorithms: Vec<Algorithm>,
     sessions: Vec<bool>,
     userhashes: Vec<bool>,
@@ -126,7 +125,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
                 None => return (401, vec![server.challenge()]),
             };
             let outcome = basic::Credentials::parse(a).and_then(|c| {
-                if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(server::Error::BadCredentials) }
+                if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(ServerError::BadCredentials) }
             });
             log.outcomes.push(outcome.clone());
             match outcome {
@@ -156,7 +155,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
             log.outcomes.push(outcome.clone());
             match outcome {
                 Ok(()) => (200, vec![]),
-                Err(server::Error::Stale) => (401, server.challenges(true, now)),
+                Err(ServerError::Stale) => (401, server.challenges(true, now)),
                 Err(e) => (e.status(), server.challenges(false, now)),
             }
         }
@@ -238,7 +237,7 @@ fn digest_options() {
         return;
     };
     fn bad_credentials(log: &Log) {
-        assert_eq!(log.outcomes, vec![Err(server::Error::BadCredentials)]);
+        assert_eq!(log.outcomes, vec![Err(ServerError::BadCredentials)]);
     }
     fn userhash(log: &Log) {
         assert_eq!(log.userhashes, vec![true]);
@@ -278,7 +277,7 @@ fn digest_stale_retry() {
     let log = log.lock().unwrap();
     assert_eq!(status, 200, "{:?}", log);
     assert_eq!(log.requests, 3);
-    assert_eq!(log.outcomes, vec![Err(server::Error::Stale), Ok(())]);
+    assert_eq!(log.outcomes, vec![Err(ServerError::Stale), Ok(())]);
 }
 
 #[test]
@@ -292,7 +291,7 @@ fn digest_raw_non_ascii_username_rejected() {
     );
     assert_eq!(status, 400);
     #[rustfmt::skip]
-    assert_eq!(log.lock().unwrap().outcomes, vec![Err(server::Error::Malformed("invalid credentials syntax"))]);
+    assert_eq!(log.lock().unwrap().outcomes, vec![Err(ServerError::Malformed("invalid credentials syntax"))]);
 }
 
 #[test]

@@ -7,7 +7,7 @@
 use std::{borrow::Cow, marker::PhantomData};
 
 use super::{is_hex, Algorithm, Qop};
-use crate::server::{parse_scheme, Error};
+use crate::server::{parse_scheme, ServerError};
 
 /// Typestate for a [`CredentialsRef`] whose nonce hasn't been checked yet.
 #[derive(Debug)]
@@ -65,8 +65,8 @@ impl<'i> CredentialsRef<'i, Unchecked> {
     ///
     /// Non-ASCII usernames must use `username*`
     /// ([RFC 8187](https://datatracker.ietf.org/doc/html/rfc8187)).
-    pub fn parse(header_value: &'i str) -> Result<Self, Error> {
-        use Error::Malformed;
+    pub fn parse(header_value: &'i str) -> Result<Self, ServerError> {
+        use ServerError::Malformed;
         let c = parse_scheme(header_value, "Digest")?;
         let params = c.body.params().ok_or(Malformed("expected auth-params"))?;
         let [username, username_ext, realm, uri, nonce, cnonce, nc, qop, response, opaque, algorithm, userhash] =
@@ -338,9 +338,9 @@ pub(crate) mod tests {
 
     #[test]
     fn errors() {
-        use Error::{Malformed, WrongScheme};
+        use ServerError::{Malformed, WrongScheme};
         let r = |from: &str, to: &str| RFC2617.replace(from, to);
-        let cases: Vec<(String, Error)> = vec![
+        let cases: Vec<(String, ServerError)> = vec![
             ("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==".into(), WrongScheme),
             ("Digest abc".into(), Malformed("expected auth-params")),
             (r("qop=auth, ", ""), Malformed("missing qop")),

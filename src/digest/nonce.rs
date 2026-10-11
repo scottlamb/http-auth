@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use crate::server::Error;
+use crate::server::ServerError;
 
 /// A 32-byte nonce HMAC key whose `Debug` output is redacted.
 #[derive(Clone, Copy)]
@@ -63,12 +63,12 @@ pub(crate) fn check(
     nonce: &str,
     now: SystemTime,
     lifetime: Duration,
-) -> Result<Validity, Error> {
+) -> Result<Validity, ServerError> {
     let mut raw = [0u8; RAW_LEN];
-    hex::decode_to_slice(nonce, &mut raw).map_err(|_| Error::BadNonce)?;
+    hex::decode_to_slice(nonce, &mut raw).map_err(|_| ServerError::BadNonce)?;
     mac(key, &raw[..16], realm)
         .verify_truncated_left(&raw[16..])
-        .map_err(|_| Error::BadNonce)?;
+        .map_err(|_| ServerError::BadNonce)?;
     let issued = u64::from_be_bytes(raw[..8].try_into().expect("8 bytes"));
     let now = secs(now);
     if issued > now.saturating_add(MAX_FUTURE_SKEW.as_secs())
@@ -132,7 +132,7 @@ mod tests {
         for bad in ["", "abc", &n[..62], &format!("{}00", n), &tampered] {
             assert!(matches!(
                 check(&KEY, "realm", bad, t(1_000_000), LIFE),
-                Err(Error::BadNonce)
+                Err(ServerError::BadNonce)
             ));
         }
     }

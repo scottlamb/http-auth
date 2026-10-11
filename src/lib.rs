@@ -22,7 +22,7 @@
 //! |-----------------|----------|--------------------------------------------------------------|
 //! | `basic-scheme`  | yes      | support for the `Basic` auth scheme                          |
 //! | `digest-scheme` | yes      | support for the `Digest` auth scheme                         |
-//! | `server`        | no       | server side: issue challenges and verify credentials (see [`server`]) |
+//! | `server`        | no       | server side: issue challenges and verify credentials |
 //! | `http10`        | no       | convenient conversion from `http` crate types, version 1.x |
 //!
 //! ## Example
@@ -95,14 +95,7 @@ mod table;
     feature = "server",
     any(feature = "basic-scheme", feature = "digest-scheme")
 ))]
-#[cfg_attr(
-    docsrs,
-    doc(cfg(all(
-        feature = "server",
-        any(feature = "basic-scheme", feature = "digest-scheme")
-    )))
-)]
-pub mod server;
+mod server;
 
 #[cfg(any(
     feature = "digest-scheme",
@@ -111,6 +104,13 @@ pub mod server;
 mod render;
 
 pub use parser::{parse_credentials, ChallengeParser};
+
+#[cfg(all(
+    feature = "server",
+    any(feature = "basic-scheme", feature = "digest-scheme")
+))]
+#[cfg_attr(docsrs, doc(cfg(feature = "server")))]
+pub use server::{Challenge, ServerError};
 
 use crate::table::{char_classes, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 
@@ -319,6 +319,8 @@ pub struct PasswordClientBuilder(
 /// *   [`ChallengeRef`]: a single parsed challenge.
 /// *   `&str`: an unparsed challenge list. Use `.as_str()` to pass a
 ///     `String`.
+/// *   [`Challenge`] (with the `server` feature): a challenge from this
+///     crate's server side.
 /// *   [`http::HeaderValue`] (with the `http10` feature): an
 ///     unparsed challenge list.
 /// *   [`http::header::GetAll`] (with the `http10` feature): all
@@ -383,6 +385,23 @@ impl sealed::Sealed for &str {
                 _ => break,
             }
         }
+    }
+}
+
+#[cfg(all(
+    feature = "server",
+    any(feature = "basic-scheme", feature = "digest-scheme")
+))]
+#[cfg_attr(docsrs, doc(cfg(feature = "server")))]
+impl ChallengeSource for &Challenge {}
+
+#[cfg(all(
+    feature = "server",
+    any(feature = "basic-scheme", feature = "digest-scheme")
+))]
+impl sealed::Sealed for &Challenge {
+    fn add_to(self, builder: &mut PasswordClientBuilder) {
+        self.as_str().add_to(builder)
     }
 }
 
@@ -485,7 +504,7 @@ assert!(matches!(client, PasswordClient::Basic(_)));
 ///
 /// Returned by [`PasswordClient`], [`basic::Client`], and [`digest::Client`].
 /// Syntax errors from parsing are [`parser::Error`]s, and server-side failures
-/// are [`server::Error`]s.
+/// are [`ServerError`]s.
 ///
 /// The [`Display`](std::fmt::Display) output describes the problem; the
 /// contents are otherwise opaque.

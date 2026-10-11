@@ -9,7 +9,7 @@ use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 
 use crate::render::HeaderWriter;
-use crate::server::{check_realm, parse_scheme, Challenge, Error};
+use crate::server::{check_realm, parse_scheme, Challenge, ServerError};
 use crate::AuthBodyRef;
 
 /// Issues `Basic` challenges.
@@ -24,7 +24,7 @@ use crate::AuthBodyRef;
 /// let creds = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
 /// assert_eq!(creds.username(), "Aladdin");
 /// assert!(creds.verify_password("open sesame"));
-/// # Ok::<(), http_auth::server::Error>(())
+/// # Ok::<(), http_auth::ServerError>(())
 /// ```
 ///
 /// `Basic` sends the password in cleartext; use TLS, and store password hashes
@@ -38,9 +38,9 @@ pub struct Server {
 impl Server {
     /// Creates a server for the given realm.
     ///
-    /// Fails with [`Error::InvalidConfig`] if the realm isn't printable
+    /// Fails with [`ServerError::InvalidConfig`] if the realm isn't printable
     /// ASCII.
-    pub fn new(realm: impl Into<String>) -> Result<Self, Error> {
+    pub fn new(realm: impl Into<String>) -> Result<Self, ServerError> {
         let realm = realm.into();
         check_realm(&realm)?;
         Ok(Self {
@@ -83,21 +83,22 @@ impl Credentials {
     /// *   `user-pass` is split at the first `:`; a missing colon is an error.
     /// *   Control characters are rejected.
     /// *   The decoded octets must be UTF-8.
-    pub fn parse(header_value: &str) -> Result<Self, Error> {
+    pub fn parse(header_value: &str) -> Result<Self, ServerError> {
         let c = parse_scheme(header_value, "Basic")?;
         let AuthBodyRef::Token68(encoded) = c.body else {
-            return Err(Error::Malformed("expected token68"));
+            return Err(ServerError::Malformed("expected token68"));
         };
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(encoded)
-            .map_err(|_| Error::Malformed("invalid base64"))?;
-        let user_pass = String::from_utf8(decoded).map_err(|_| Error::Malformed("not UTF-8"))?;
+            .map_err(|_| ServerError::Malformed("invalid base64"))?;
+        let user_pass =
+            String::from_utf8(decoded).map_err(|_| ServerError::Malformed("not UTF-8"))?;
         if user_pass.bytes().any(|b| b < 0x20 || b == 0x7F) {
-            return Err(Error::Malformed("control character"));
+            return Err(ServerError::Malformed("control character"));
         }
         let colon = user_pass
             .find(':')
-            .ok_or(Error::Malformed("missing colon"))?;
+            .ok_or(ServerError::Malformed("missing colon"))?;
         Ok(Self { user_pass, colon })
     }
 
@@ -159,8 +160,8 @@ mod tests {
 
     #[test]
     fn parse_errors() {
-        use Error::{Malformed, WrongScheme};
-        let cases: &[(&str, Error)] = &[
+        use ServerError::{Malformed, WrongScheme};
+        let cases: &[(&str, ServerError)] = &[
             ("Digest username=\"x\"", WrongScheme),
             (
                 "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ",
@@ -193,8 +194,11 @@ mod tests {
         );
         assert!(matches!(
             Server::new("caf\u{e9}"),
-            Err(Error::InvalidConfig(_))
+            Err(ServerError::InvalidConfig(_))
         ));
-        assert!(matches!(Server::new("a\nb"), Err(Error::InvalidConfig(_))));
+        assert!(matches!(
+            Server::new("a\nb"),
+            Err(ServerError::InvalidConfig(_))
+        ));
     }
 }

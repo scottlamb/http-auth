@@ -63,12 +63,12 @@ highest `nc` per `(nonce, cnonce)` for RFC 7616 §5.5.
 | `verify`: nonce authentic but expired, everything else valid | `Stale` |
 | `basic::Credentials::parse` (RFC 7617 §2): scheme, token68 base64, `:` split, CTLs, UTF-8 | `Malformed` / `WrongScheme` |
 
-Builders return `server::Error::InvalidConfig`.
+Builders return `ServerError::InvalidConfig`.
 
 # Errors
 
-`server::Error::status()` gives the HTTP status to respond with; re-challenge
-with `stale=true` on `server::Error::Stale`. Failure details go to logs only.
+`ServerError::status()` gives the HTTP status to respond with; re-challenge
+with `stale=true` on `ServerError::Stale`. Failure details go to logs only.
 
 ## Features and compatibility
 

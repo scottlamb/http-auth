@@ -14,7 +14,7 @@ use std::convert::TryFrom;
 use std::time::SystemTime;
 
 use http_auth::digest::{Algorithm, Qop, QopSet, Request, Secret};
-use http_auth::{basic, digest, parse_challenges, server, PasswordParams};
+use http_auth::{basic, digest, parse_challenges, PasswordClient, PasswordParams, ServerError};
 
 /// xorshift64*.
 struct Rng(u64);
@@ -67,11 +67,11 @@ fn check(rng: &mut Rng, algorithm: Algorithm, session: bool, qop: QopSet, userha
         (request, Secret::Password { username: "wrong", password: &password }),
         (Request { method: "PUT", uri: "/x?y=1", body }, pw),
     ] {
-        assert_eq!(server.verify(&response, request, secret), Err(server::Error::BadCredentials), "{}", ctx);
+        assert_eq!(server.verify(&response, request, secret), Err(ServerError::BadCredentials), "{}", ctx);
     }
     if response.qop() == Qop::AuthInt {
         let tampered = Request { method: "POST", uri: "/x?y=1", body: Some(&b"tampered"[..]) };
-        assert_eq!(server.verify(&response, tampered, pw), Err(server::Error::BadCredentials), "{}", ctx);
+        assert_eq!(server.verify(&response, tampered, pw), Err(ServerError::BadCredentials), "{}", ctx);
     }
 }
 
@@ -110,6 +110,10 @@ fn basic_round_trip() {
             .unwrap()
             .charset_utf8(true);
         let challenge = server.challenge();
+        assert!(matches!(
+            PasswordClient::builder().with(&challenge).build(),
+            Ok(PasswordClient::Basic(_))
+        ));
         let parsed = parse_challenges(challenge.as_str()).unwrap();
         let client = basic::Client::try_from(&parsed[0]).unwrap();
         let creds = basic::Credentials::parse(&client.respond(&username, &password)).unwrap();
