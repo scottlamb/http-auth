@@ -13,7 +13,7 @@ mod server;
 
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use self::server::{Credentials, Server};
+pub use self::server::{ChallengeBuilder, Credentials};
 
 /// Encodes the given credentials.
 ///

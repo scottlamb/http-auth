@@ -1,12 +1,28 @@
 // Copyright (C) 2026 Scott Lamb <slamb@slamb.org>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Server-side code shared by [`crate::basic::Server`] and
+//! Server-side code shared by [`crate::basic::ChallengeBuilder`] and
 //! [`crate::digest::Server`]. The public types are re-exported at the crate
 //! root.
 
 /// A challenge, ready to send as a `WWW-Authenticate` (401) or
 /// `Proxy-Authenticate` (407) value.
+///
+/// A challenge that doesn't change between requests, such as
+/// [`crate::basic::ChallengeBuilder`]'s, can be built once and kept. With the
+/// `http10` feature, keeping it as an `http::HeaderValue` makes each use a
+/// cheap reference-counted clone:
+///
+/// ```rust
+/// # #[cfg(all(feature = "basic-scheme", feature = "http10"))] {
+/// let challenge = http::HeaderValue::from(
+///     http_auth::basic::ChallengeBuilder::new("WallyWorld").build()?,
+/// );
+/// let mut headers = http::HeaderMap::new();
+/// headers.append(http::header::WWW_AUTHENTICATE, challenge.clone());
+/// # }
+/// # Ok::<(), http_auth::ConfigError>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Challenge(pub(crate) String);
 

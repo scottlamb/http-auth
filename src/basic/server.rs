@@ -12,13 +12,16 @@ use crate::render::HeaderWriter;
 use crate::server::{check_realm, parse_scheme, Challenge, ConfigError, ServerError};
 use crate::AuthBodyRef;
 
-/// Issues `Basic` challenges.
+/// Builds a `Basic` challenge.
+///
+/// The challenge is the same for every request, so build it once and clone it
+/// as needed; see [`Challenge`] for a cheaper-to-clone form.
 ///
 /// ```rust
-/// use http_auth::basic::{Credentials, Server};
-/// let server = Server::new("WallyWorld")?.charset_utf8(true);
+/// use http_auth::basic::{ChallengeBuilder, Credentials};
+/// let challenge = ChallengeBuilder::new("WallyWorld").charset_utf8(true).build()?;
 /// assert_eq!(
-///     server.challenge().as_str(),
+///     challenge.as_str(),
 ///     r#"Basic realm="WallyWorld", charset="UTF-8""#,
 /// );
 /// let creds = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
@@ -30,22 +33,18 @@ use crate::AuthBodyRef;
 /// `Basic` sends the password in cleartext; use TLS, and store password hashes
 /// ([OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)).
 #[derive(Clone, Debug)]
-pub struct Server {
-    realm: Box<str>,
+pub struct ChallengeBuilder {
+    realm: String,
     charset_utf8: bool,
 }
 
-impl Server {
-    /// Creates a server for the given realm.
-    ///
-    /// Fails with [`ConfigError`] if the realm isn't printable ASCII.
-    pub fn new(realm: impl Into<String>) -> Result<Self, ConfigError> {
-        let realm = realm.into();
-        check_realm(&realm)?;
-        Ok(Self {
-            realm: realm.into_boxed_str(),
+impl ChallengeBuilder {
+    /// Starts building a challenge for the given realm.
+    pub fn new(realm: impl Into<String>) -> Self {
+        Self {
+            realm: realm.into(),
             charset_utf8: false,
-        })
+        }
     }
 
     /// Adds `charset="UTF-8"` to the challenge, telling clients to send
@@ -56,14 +55,16 @@ impl Server {
         self
     }
 
-    /// Returns the challenge.
-    pub fn challenge(&self) -> Challenge {
+    /// Returns the challenge, or [`ConfigError`] if the realm isn't printable
+    /// ASCII.
+    pub fn build(self) -> Result<Challenge, ConfigError> {
+        check_realm(&self.realm)?;
         let mut w = HeaderWriter::new("Basic");
         w.quoted("realm", &self.realm);
         if self.charset_utf8 {
             w.quoted("charset", "UTF-8");
         }
-        Challenge(w.finish())
+        Ok(Challenge(w.finish()))
     }
 }
 
@@ -184,14 +185,15 @@ mod tests {
 
     #[test]
     fn challenge() {
-        let s = Server::new("WallyWorld").unwrap();
-        assert_eq!(s.challenge().as_str(), r#"Basic realm="WallyWorld""#);
-        let s = Server::new(r#"a "b""#).unwrap().charset_utf8(true);
-        assert_eq!(
-            s.challenge().as_str(),
-            r#"Basic realm="a \"b\"", charset="UTF-8""#
-        );
-        assert!(Server::new("caf\u{e9}").is_err());
-        assert!(Server::new("a\nb").is_err());
+        let c = ChallengeBuilder::new("WallyWorld").build().unwrap();
+        assert_eq!(c.as_str(), r#"Basic realm="WallyWorld""#);
+        let c = ChallengeBuilder::new(r#"a "b""#)
+            .charset_utf8(true)
+            .build()
+            .unwrap();
+        assert_eq!(c.as_str(), r#"Basic realm="a \"b\"", charset="UTF-8""#);
+        for realm in ["caf\u{e9}", "a\nb"] {
+            assert!(ChallengeBuilder::new(realm).build().is_err());
+        }
     }
 }

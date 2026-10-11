@@ -25,13 +25,14 @@ use hyper_util::rt::TokioIo;
 const BIND: &str = "127.0.0.1:8080";
 
 struct Servers {
-    basic: basic::Server,
+    /// Built once and cloned per use.
+    basic: Challenge,
     digest: digest::Server,
 }
 
 fn main() {
     let servers = Arc::new(Servers {
-        basic: basic::Server::new("WallyWorld").unwrap(),
+        basic: basic::ChallengeBuilder::new("WallyWorld").build().unwrap(),
         digest: digest::Server::builder("http-auth@example.org")
             .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
             .build()
@@ -71,7 +72,7 @@ fn handle(servers: &Servers, req: Request<Incoming>) -> Response<Empty<Bytes>> {
     let uri = req.uri().path_and_query().map_or("/", |p| p.as_str());
     let (status, challenges) = match (req.uri().path(), authorization) {
         ("/basic", Some(a)) => verify_basic(&servers.basic, a),
-        ("/basic", None) => (401, vec![servers.basic.challenge()]),
+        ("/basic", None) => (401, vec![servers.basic.clone()]),
         ("/digest", Some(a)) => verify_digest(&servers.digest, a, req.method().as_str(), uri),
         ("/digest", None) => (401, servers.digest.challenges(false, SystemTime::now())),
         _ => (404, vec![]),
@@ -83,7 +84,7 @@ fn handle(servers: &Servers, req: Request<Incoming>) -> Response<Empty<Bytes>> {
     resp.body(Empty::new()).unwrap()
 }
 
-fn verify_basic(server: &basic::Server, header: &str) -> (u16, Vec<Challenge>) {
+fn verify_basic(challenge: &Challenge, header: &str) -> (u16, Vec<Challenge>) {
     let outcome = basic::Credentials::parse(header).and_then(|c| {
         if c.username() == "aladdin" && c.verify_password("open sesame") {
             Ok(())
@@ -93,7 +94,7 @@ fn verify_basic(server: &basic::Server, header: &str) -> (u16, Vec<Challenge>) {
     });
     match outcome {
         Ok(()) => (200, vec![]),
-        Err(e) => (e.status(), vec![server.challenge()]),
+        Err(e) => (e.status(), vec![challenge.clone()]),
     }
 }
 

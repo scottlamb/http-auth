@@ -106,10 +106,10 @@ fn basic_round_trip() {
     for _ in 0..200 {
         let username = rng.word(&["a", "Z", "0", " ", "\"", "@", "\u{e4}", "\u{1f600}"]); // no ':'
         let password = rng.word(ANY);
-        let server = basic::Server::new(rng.word(ASCII))
-            .unwrap()
-            .charset_utf8(true);
-        let challenge = server.challenge();
+        let challenge = basic::ChallengeBuilder::new(rng.word(ASCII))
+            .charset_utf8(true)
+            .build()
+            .unwrap();
         assert!(matches!(
             PasswordClient::builder().with(&challenge).build(),
             Ok(PasswordClient::Basic(_))

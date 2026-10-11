@@ -27,7 +27,7 @@ const REALM: &str = "http-auth@example.org";
 
 enum Scheme {
     Digest(digest::Server),
-    Basic(basic::Server),
+    Basic(Challenge),
 }
 
 struct Config {
@@ -119,10 +119,10 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
     log.requests += 1;
     let now = SystemTime::now();
     match &config.scheme {
-        Scheme::Basic(server) => {
+        Scheme::Basic(challenge) => {
             let a = match authorization {
                 Some(a) => a,
-                None => return (401, vec![server.challenge()]),
+                None => return (401, vec![challenge.clone()]),
             };
             let outcome = basic::Credentials::parse(a).and_then(|c| {
                 if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(ServerError::BadCredentials) }
@@ -130,7 +130,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
             log.outcomes.push(outcome.clone());
             match outcome {
                 Ok(()) => (200, vec![]),
-                Err(e) => (e.status(), vec![server.challenge()]),
+                Err(e) => (e.status(), vec![challenge.clone()]),
             }
         }
         Scheme::Digest(server) => {
@@ -320,7 +320,7 @@ fn basic() {
         ("Aladdin:wrong", "Aladdin", "open sesame", 401),
         ("test:123\u{a3}", "test", "123\u{a3}", 200),
     ] {
-        let (port, _log) = spawn(Config { scheme: Scheme::Basic(basic::Server::new("WallyWorld").unwrap().charset_utf8(true)), username, password, use_ha1: false, issue_stale_first: false });
+        let (port, _log) = spawn(Config { scheme: Scheme::Basic(basic::ChallengeBuilder::new("WallyWorld").charset_utf8(true).build().unwrap()), username, password, use_ha1: false, issue_stale_first: false });
         let url = format!("http://127.0.0.1:{}/", port);
         assert_eq!(curl(&["--basic", "-u", user_pass, &url]), expected, "{}", user_pass);
     }

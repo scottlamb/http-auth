@@ -32,7 +32,7 @@
 
 ### Added
 
-*   server support behind the `server` feature: `basic::Server`,
+*   server support behind the `server` feature: `basic::ChallengeBuilder`,
     `basic::Credentials`, `digest::Server`, `digest::CredentialsRef`,
     `Challenge`, `ServerError`, `ConfigError`.
     `PasswordClientBuilder::with` also accepts a `&Challenge`.

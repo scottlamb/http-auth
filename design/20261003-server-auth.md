@@ -33,9 +33,10 @@ then `verify(&resp, Request { method, uri, body }, secret)`; only a
 `digest::Server::builder(realm)` builds a `Send + Sync` server;
 `challenges(stale, now)` returns one validated `Challenge` per offered
 algorithm. The secret is `Secret::Ha1(&str)` or
-`Secret::Password { username, password }`. `basic::Server::new(realm)`
-validates the realm; `challenge()`, `basic::Credentials::parse` and
-`verify_password` complete the `Basic` server.
+`Secret::Password { username, password }`.
+`basic::ChallengeBuilder::new(realm)` builds the unchanging `Basic` challenge
+once, validating the realm; `basic::Credentials::parse` and `verify_password`
+complete the `Basic` server.
 
 The nonce is `hex(issued_at_secs:u64be || salt:[u8; 8] || HMAC-SHA256(key,
 issued_at_secs || salt || realm)[..16])`, keyed by `nonce_key` with lifetime
