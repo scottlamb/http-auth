@@ -8,6 +8,13 @@ use std::convert::TryFrom;
 
 use crate::ChallengeRef;
 
+#[cfg(feature = "server")]
+mod server;
+
+#[cfg(feature = "server")]
+#[cfg_attr(docsrs, doc(cfg(feature = "server")))]
+pub use self::server::{BasicCredentials, BasicServer};
+
 /// Encodes the given credentials.
 ///
 /// This can be used to preemptively send `Basic` authentication, without
@@ -77,10 +84,11 @@ impl TryFrom<&ChallengeRef<'_>> for BasicClient {
                 value.scheme
             ));
         }
+        let params = value.body.params().ok_or("expected auth-params")?;
         let mut realm = None;
-        for (k, v) in &value.params {
+        for (k, v) in params {
             if k.eq_ignore_ascii_case("realm") {
-                realm = Some(v.to_unescaped());
+                realm = Some(v.to_unescaped().into_owned());
             }
         }
         let realm = realm.ok_or("missing required parameter realm")?;

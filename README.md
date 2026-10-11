@@ -2,9 +2,9 @@
 [![Released API docs](https://docs.rs/http-auth/badge.svg)](https://docs.rs/http-auth/)
 [![CI](https://github.com/scottlamb/http-auth/workflows/CI/badge.svg)](https://github.com/scottlamb/http-auth/actions?query=workflow%3ACI)
 
-Rust library for HTTP authentication. Parses challenge lists, responds
-to `Basic` and `Digest` challenges. Likely to be extended with server
-support and additional auth schemes.
+Rust library for HTTP authentication. Parses challenge lists and responds
+to `Basic` and `Digest` challenges (client side), and issues challenges and
+verifies `Basic` and `Digest` credentials (server side, `server` feature).
 
 HTTP authentication is described in the following documents and specifications:
 
@@ -38,8 +38,8 @@ In order:
     bloat. Small data structures; eg `http_auth::DigestClient` currently weighs
     in at 32 bytes plus one allocation for all string fields.
 4.  **complete.** Implements both parsing and responding to challenges.
-    (Currently only supports the client side and responding to the most common
-    `Basic` and `Digest` schemes; future expansion is likely.)
+    (Currently supports the most common `Basic` and `Digest` schemes, on both
+    the client and server side; future expansion is likely.)
 5.  **ergonomic.** Creating a client for responding to a password challenge is
     a one-liner from a string header or a
     [`http::header::GetAll`](https://docs.rs/http/0.2.5/http/header/struct.GetAll.html).
