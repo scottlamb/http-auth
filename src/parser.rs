@@ -163,15 +163,14 @@ impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "invalid {}: {} at byte {}: {:?}",
+            "invalid {}: {} at byte {}: \"{}(HERE-->){}\"",
             self.context.as_str(),
             self.error,
             self.pos,
-            format_args!(
-                "{}(HERE-->){}",
-                &self.input[..self.pos],
-                &self.input[self.pos..]
-            ),
+            // Escape so hostile input (e.g. an `Authorization` header) can't
+            // inject control characters into logs.
+            self.input[..self.pos].escape_debug(),
+            self.input[self.pos..].escape_debug(),
         )
     }
 }
@@ -987,6 +986,15 @@ mod tests {
         let e = parse_credentials(" \tBa\x01sic abc").unwrap_err();
         assert_eq!(e.pos, 4, "{}", e);
         assert!(e.to_string().starts_with("invalid credentials: "), "{}", e);
+    }
+
+    #[test]
+    fn display_escapes_input() {
+        let e = parse_credentials("Basic a=\"\x1b[31m\n").unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            r#"invalid credentials: invalid byte at byte 9: "Basic a=\"(HERE-->)\u{1b}[31m\n""#,
+        );
     }
 
     #[test]

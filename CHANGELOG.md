@@ -49,6 +49,8 @@
 *   `parser::Error`'s message says what was being parsed (a challenge list,
     credentials, or a field given to `try_new` / `try_from_escaped`).
     `parse_credentials` errors report positions within the untrimmed input.
+*   `parser::Error`'s message quotes and escapes the input, so control
+    characters from untrusted headers don't reach logs verbatim.
 
 ## `v0.1.10` (2024-08-31)
 
