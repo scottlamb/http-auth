@@ -20,17 +20,15 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use http_auth::basic::{BasicCredentials, BasicServer};
-use http_auth::digest::{
-    Algorithm, DigestResponse, DigestServer, DigestServerBuilder, Qop, Request, Secret, Username,
-};
-use http_auth::server::{Challenge, ServerError};
+use http_auth::digest::{Algorithm, Qop, Request, Secret, Username};
+use http_auth::server::Challenge;
+use http_auth::{basic, digest, server};
 
 const REALM: &str = "http-auth@example.org";
 
 enum Scheme {
-    Digest(DigestServer),
-    Basic(BasicServer),
+    Digest(digest::Server),
+    Basic(basic::Server),
 }
 
 struct Config {
@@ -42,7 +40,7 @@ struct Config {
 }
 
 impl Config {
-    fn digest(server: DigestServer) -> Self {
+    fn digest(server: digest::Server) -> Self {
         Config {
             scheme: Scheme::Digest(server),
             username: "Mufasa",
@@ -56,7 +54,7 @@ impl Config {
 #[derive(Debug, Default)]
 struct Log {
     requests: usize,
-    outcomes: Vec<Result<(), ServerError>>,
+    outcomes: Vec<Result<(), server::Error>>,
     algorithms: Vec<Algorithm>,
     sessions: Vec<bool>,
     userhashes: Vec<bool>,
@@ -127,8 +125,8 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
                 Some(a) => a,
                 None => return (401, vec![server.challenge()]),
             };
-            let outcome = BasicCredentials::parse(a).and_then(|c| {
-                if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(ServerError::BadCredentials) }
+            let outcome = basic::Credentials::parse(a).and_then(|c| {
+                if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(server::Error::BadCredentials) }
             });
             log.outcomes.push(outcome);
             match outcome {
@@ -144,7 +142,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
                     return (401, server.challenges(false, issued));
                 }
             };
-            let outcome = DigestResponse::parse(a).and_then(|r| {
+            let outcome = digest::CredentialsRef::parse(a).and_then(|r| {
                 log.algorithms.push(r.algorithm());
                 log.sessions.push(r.session());
                 log.userhashes.push(matches!(r.username(), Username::Hashed(_)));
@@ -158,7 +156,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
             log.outcomes.push(outcome);
             match outcome {
                 Ok(()) => (200, vec![]),
-                Err(ServerError::Stale) => (401, server.challenges(true, now)),
+                Err(server::Error::Stale) => (401, server.challenges(true, now)),
                 Err(e) => (e.status(), server.challenges(false, now)),
             }
         }
@@ -204,8 +202,8 @@ fn run_digest(config: Config, user_pass: &str) -> (u16, Arc<Mutex<Log>>) {
     (curl(&["--digest", "-u", user_pass, &url]), log)
 }
 
-fn server(algorithms: &[Algorithm]) -> DigestServerBuilder {
-    DigestServer::builder(REALM)
+fn server(algorithms: &[Algorithm]) -> digest::ServerBuilder {
+    digest::Server::builder(REALM)
         .algorithms(algorithms)
         .opaque("opaque-value")
 }
@@ -240,7 +238,7 @@ fn digest_options() {
         return;
     };
     fn bad_credentials(log: &Log) {
-        assert_eq!(log.outcomes, vec![Err(ServerError::BadCredentials)]);
+        assert_eq!(log.outcomes, vec![Err(server::Error::BadCredentials)]);
     }
     fn userhash(log: &Log) {
         assert_eq!(log.userhashes, vec![true]);
@@ -249,14 +247,14 @@ fn digest_options() {
         assert_eq!(log.qops, vec![Qop::AuthInt]);
     }
     #[rustfmt::skip]
-    type Case = (DigestServerBuilder, &'static str, bool, u16, Option<fn(&Log)>);
+    type Case = (digest::ServerBuilder, &'static str, bool, u16, Option<fn(&Log)>);
     #[rustfmt::skip]
     let cases: [Case; 5] = [
         (server(&[Algorithm::Sha256]), "Mufasa:nope", false, 401, Some(bad_credentials)),
         (server(&[Algorithm::Sha256]), "Mufasa:Circle of Life", true, 200, None),
         (server(&[Algorithm::Sha256]).userhash(true), "Mufasa:Circle of Life", false, 200, Some(userhash)),
         (server(&[Algorithm::Md5]).qop(Qop::AuthInt.into()), "Mufasa:Circle of Life", false, 200, Some(auth_int)),
-        (DigestServer::builder(r#"a "quoted" \ realm"#), "Mufasa:Circle of Life", false, 200, None),
+        (digest::Server::builder(r#"a "quoted" \ realm"#), "Mufasa:Circle of Life", false, 200, None),
     ];
     for (builder, user_pass, use_ha1, expected_status, check) in cases {
         let mut config = Config::digest(builder.build().unwrap());
@@ -280,7 +278,7 @@ fn digest_stale_retry() {
     let log = log.lock().unwrap();
     assert_eq!(status, 200, "{:?}", log);
     assert_eq!(log.requests, 3);
-    assert_eq!(log.outcomes, vec![Err(ServerError::Stale), Ok(())]);
+    assert_eq!(log.outcomes, vec![Err(server::Error::Stale), Ok(())]);
 }
 
 #[test]
@@ -294,7 +292,7 @@ fn digest_raw_non_ascii_username_rejected() {
     );
     assert_eq!(status, 400);
     #[rustfmt::skip]
-    assert_eq!(log.lock().unwrap().outcomes, vec![Err(ServerError::Malformed("invalid credentials syntax"))]);
+    assert_eq!(log.lock().unwrap().outcomes, vec![Err(server::Error::Malformed("invalid credentials syntax"))]);
 }
 
 #[test]
@@ -323,7 +321,7 @@ fn basic() {
         ("Aladdin:wrong", "Aladdin", "open sesame", 401),
         ("test:123\u{a3}", "test", "123\u{a3}", 200),
     ] {
-        let (port, _log) = spawn(Config { scheme: Scheme::Basic(BasicServer::new("WallyWorld").unwrap().charset_utf8(true)), username, password, use_ha1: false, issue_stale_first: false });
+        let (port, _log) = spawn(Config { scheme: Scheme::Basic(basic::Server::new("WallyWorld").unwrap().charset_utf8(true)), username, password, use_ha1: false, issue_stale_first: false });
         let url = format!("http://127.0.0.1:{}/", port);
         assert_eq!(curl(&["--basic", "-u", user_pass, &url]), expected, "{}", user_pass);
     }

@@ -17,7 +17,7 @@ use nom::combinator::{all_consuming, consumed, eof, map, opt, peek, recognize, v
 use nom::multi::{fold_many0, many0_count, many1, many1_count, separated_list0, separated_list1};
 use nom::sequence::{delimited, pair, preceded, separated_pair, terminated, tuple};
 
-use http_auth::{AuthBody, ChallengeRef, CredentialsRef, ParamValue};
+use http_auth::{AuthBodyRef, ChallengeRef, CredentialsRef, ParamValueRef};
 
 /// Parses optional whitespace as in [RFC 7230 section 3.2.3](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.3).
 ///
@@ -57,7 +57,7 @@ fn token(input: &str) -> nom::IResult<&str, &str> {
 /// VCHAR          =  %x21-7E
 ///                ; visible (printing) characters
 /// ```
-fn quoted_string(input: &str) -> nom::IResult<&str, ParamValue<'_>> {
+fn quoted_string(input: &str) -> nom::IResult<&str, ParamValueRef<'_>> {
     trace!("quoted_string attempt on {:?}", input);
     let is_qdtext = |c| match c {
         '\t' | ' ' | '\x21' | '\x23'..='\x5B' | '\x5D'..='\x7E' => true,
@@ -78,7 +78,7 @@ fn quoted_string(input: &str) -> nom::IResult<&str, ParamValue<'_>> {
                 || 0,
                 |acc: usize, item: usize| acc + item,
             )),
-            |(raw, escapes)| ParamValue::new(escapes, raw),
+            |(raw, escapes)| ParamValueRef::new(escapes, raw),
         ),
         char('"'),
     )(input)
@@ -90,12 +90,12 @@ fn quoted_string(input: &str) -> nom::IResult<&str, ParamValue<'_>> {
 /// ```text
 ///   auth-param = token BWS "=" BWS ( token / quoted-string )
 /// ```
-fn auth_param(input: &str) -> nom::IResult<&str, (&str, ParamValue<'_>)> {
+fn auth_param(input: &str) -> nom::IResult<&str, (&str, ParamValueRef<'_>)> {
     trace!("auth_param attempt on {:?}", input);
     separated_pair(
         token,
         tuple((bws, char('='), bws)),
-        alt((map(token, |raw| ParamValue::new(0, raw)), quoted_string)),
+        alt((map(token, |raw| ParamValueRef::new(0, raw)), quoted_string)),
     )(input)
 }
 
@@ -178,14 +178,14 @@ fn challenge(input: &str) -> nom::IResult<&str, ChallengeRef<'_>> {
             opt(preceded(
                 many1_count(char(' ')),
                 alt((
-                    map(challenge_token68, AuthBody::Token68),
-                    map(list0_relaxed_inner(auth_param), AuthBody::Params),
+                    map(challenge_token68, AuthBodyRef::Token68),
+                    map(list0_relaxed_inner(auth_param), AuthBodyRef::Params),
                 )),
             )),
         )),
         |(scheme, body)| ChallengeRef {
             scheme,
-            body: body.unwrap_or(AuthBody::Params(Vec::new())),
+            body: body.unwrap_or(AuthBodyRef::Params(Vec::new())),
         },
     )(input)
 }
@@ -240,17 +240,17 @@ pub fn credentials(input: &str) -> nom::IResult<&str, CredentialsRef<'_>> {
             opt(preceded(
                 many1_count(char(' ')),
                 alt((
-                    map(terminated(token68, eof), AuthBody::Token68),
+                    map(terminated(token68, eof), AuthBodyRef::Token68),
                     map(
                         separated_list1(tuple((ows, char(','), ows)), auth_param),
-                        AuthBody::Params,
+                        AuthBodyRef::Params,
                     ),
                 )),
             )),
         )),
         |(scheme, body)| CredentialsRef {
             scheme,
-            body: body.unwrap_or(AuthBody::Params(Vec::new())),
+            body: body.unwrap_or(AuthBodyRef::Params(Vec::new())),
         },
     )(input)
 }
@@ -267,17 +267,17 @@ mod tests {
     fn test_quoted_string() {
         assert_eq!(
             quoted_string(&r#""foo""#),
-            Ok(("", ParamValue::new(0, "foo")))
+            Ok(("", ParamValueRef::new(0, "foo")))
         );
         assert_eq!(
             quoted_string(&r#""foo bar""#),
-            Ok(("", ParamValue::new(0, "foo bar")))
+            Ok(("", ParamValueRef::new(0, "foo bar")))
         );
         assert_eq!(
             quoted_string(&r#""foo \" bar""#),
-            Ok(("", ParamValue::new(1, r#"foo \" bar"#))),
+            Ok(("", ParamValueRef::new(1, r#"foo \" bar"#))),
         );
-        assert_eq!(quoted_string(r#""""#), Ok(("", ParamValue::new(0, ""))));
+        assert_eq!(quoted_string(r#""""#), Ok(("", ParamValueRef::new(0, ""))));
     }
 
     #[test]
@@ -288,7 +288,10 @@ mod tests {
                 "",
                 vec![ChallengeRef {
                     scheme: "Scheme",
-                    body: AuthBody::Params(vec![("foo", ParamValue::new(1, "blah \\\" blah"))]),
+                    body: AuthBodyRef::Params(vec![(
+                        "foo",
+                        ParamValueRef::new(1, "blah \\\" blah")
+                    )]),
                 }]
             ))
         );

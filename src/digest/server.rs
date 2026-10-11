@@ -7,10 +7,10 @@
 use std::borrow::Cow;
 use std::time::{Duration, SystemTime};
 
-use super::response::{DigestResponse, NonceChecked, Unchecked, Username};
+use super::response::{CredentialsRef, NonceChecked, Unchecked, Username};
 use super::{h_a1, h_a2, is_hex, nonce, nonce::NonceKey, Algorithm, Qop, QopSet};
 use crate::render::{is_quotable, HeaderWriter};
-use crate::server::{check_realm, Challenge, ServerError};
+use crate::server::{check_realm, Challenge, Error};
 use subtle::ConstantTimeEq as _;
 
 /// The request being authenticated, as the server received it.
@@ -57,14 +57,14 @@ impl std::fmt::Debug for Secret<'_> {
 
 /// Issues `Digest` challenges and verifies responses.
 ///
-/// Build once with [`DigestServer::builder`]. Each request is parsed,
+/// Build once with [`Server::builder`]. Each request is parsed,
 /// nonce-checked, then verified:
 ///
 /// ```rust
 /// use std::time::SystemTime;
-/// use http_auth::digest::{Algorithm, DigestResponse, DigestServer, Request, Secret, Username};
+/// use http_auth::digest::{Algorithm, CredentialsRef, Server, Request, Secret, Username};
 ///
-/// let server = DigestServer::builder("cams@example.com")
+/// let server = Server::builder("cams@example.com")
 ///     .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
 ///     .build()?;
 ///
@@ -73,13 +73,13 @@ impl std::fmt::Debug for Secret<'_> {
 /// # let header = {
 /// #     use std::convert::TryFrom as _;
 /// #     let c = http_auth::parse_challenges(challenges[0].as_str()).unwrap();
-/// #     http_auth::DigestClient::try_from(&c[0]).unwrap().respond(&http_auth::PasswordParams {
+/// #     http_auth::digest::Client::try_from(&c[0]).unwrap().respond(&http_auth::PasswordParams {
 /// #         username: "Mufasa", password: "Circle of Life", uri: "/", method: "GET", body: None,
 /// #     }).unwrap()
 /// # };
 ///
 /// // On a request with an `Authorization` header:
-/// let response = DigestResponse::parse(&header)?;
+/// let response = CredentialsRef::parse(&header)?;
 /// let response = server.check_nonce(response, SystemTime::now())?;
 /// // Look up the user here (possibly with .await).
 /// assert_eq!(response.username(), Username::Plain("Mufasa"));
@@ -88,17 +88,17 @@ impl std::fmt::Debug for Secret<'_> {
 ///     Request { method: "GET", uri: "/", body: None },
 ///     Secret::Password { username: "Mufasa", password: "Circle of Life" },
 /// )?;
-/// # Ok::<(), http_auth::server::ServerError>(())
+/// # Ok::<(), http_auth::server::Error>(())
 /// ```
 ///
 /// ## Security considerations
 ///
-/// See [`crate::digest::DigestClient`]'s security considerations.
+/// See [`crate::digest::Client`]'s security considerations.
 ///
-/// [`DigestServer::check_nonce`] doesn't detect replays; see
-/// [`DigestResponse::nonce_checked_externally`].
+/// [`Server::check_nonce`] doesn't detect replays; see
+/// [`CredentialsRef::nonce_checked_externally`].
 #[derive(Clone, Debug)]
-pub struct DigestServer {
+pub struct Server {
     realm: Box<str>,
     algorithms: Vec<Algorithm>,
     session: bool,
@@ -110,11 +110,11 @@ pub struct DigestServer {
     nonce_lifetime: Duration,
 }
 
-/// Builds a [`DigestServer`].
+/// Builds a [`Server`].
 #[derive(Clone, Debug)]
-pub struct DigestServerBuilder(DigestServer);
+pub struct ServerBuilder(Server);
 
-impl DigestServerBuilder {
+impl ServerBuilder {
     /// Algorithms to offer, most preferred first; one challenge is issued per
     /// algorithm. Default: `[Md5]`.
     pub fn algorithms(mut self, algorithms: &[Algorithm]) -> Self {
@@ -171,8 +171,8 @@ impl DigestServerBuilder {
     }
 
     /// Validates the configuration.
-    pub fn build(self) -> Result<DigestServer, ServerError> {
-        use ServerError::InvalidConfig;
+    pub fn build(self) -> Result<Server, Error> {
+        use Error::InvalidConfig;
         let s = self.0;
         if s.algorithms.is_empty() {
             return Err(InvalidConfig("no algorithms"));
@@ -205,10 +205,10 @@ impl DigestServerBuilder {
     }
 }
 
-impl DigestServer {
+impl Server {
     /// Starts building a server for the given realm.
-    pub fn builder(realm: impl Into<String>) -> DigestServerBuilder {
-        DigestServerBuilder(DigestServer {
+    pub fn builder(realm: impl Into<String>) -> ServerBuilder {
+        ServerBuilder(Server {
             realm: realm.into().into_boxed_str(),
             algorithms: vec![Algorithm::Md5],
             session: false,
@@ -222,7 +222,7 @@ impl DigestServer {
     }
 
     /// Returns one challenge per offered algorithm, in preference order,
-    /// sharing a fresh nonce. Set `stale` after [`ServerError::Stale`].
+    /// sharing a fresh nonce. Set `stale` after [`Error::Stale`].
     pub fn challenges(&self, stale: bool, now: SystemTime) -> Vec<Challenge> {
         let nonce = nonce::issue(&self.nonce_key.0, &self.realm, now, rand::random());
         let qop = [Qop::Auth, Qop::AuthInt]
@@ -257,13 +257,13 @@ impl DigestServer {
             .collect()
     }
 
-    /// Checks the nonce's HMAC: [`ServerError::BadNonce`] if not issued by
-    /// this server. An expired nonce is marked [`DigestResponse::stale`].
+    /// Checks the nonce's HMAC: [`Error::BadNonce`] if not issued by
+    /// this server. An expired nonce is marked [`CredentialsRef::stale`].
     pub fn check_nonce<'i>(
         &self,
-        response: DigestResponse<'i, Unchecked>,
+        response: CredentialsRef<'i, Unchecked>,
         now: SystemTime,
-    ) -> Result<DigestResponse<'i, NonceChecked>, ServerError> {
+    ) -> Result<CredentialsRef<'i, NonceChecked>, Error> {
         let validity = nonce::check(
             &self.nonce_key.0,
             &self.realm,
@@ -282,41 +282,41 @@ impl DigestServer {
 
     /// Verifies `response` against `request` and `secret`
     /// ([RFC 7616 section 3.4](https://datatracker.ietf.org/doc/html/rfc7616#section-3.4)).
-    /// Returns [`ServerError::Stale`] only if everything else verifies.
+    /// Returns [`Error::Stale`] only if everything else verifies.
     pub fn verify(
         &self,
-        response: &DigestResponse<'_, NonceChecked>,
+        response: &CredentialsRef<'_, NonceChecked>,
         request: Request<'_>,
         secret: Secret<'_>,
-    ) -> Result<(), ServerError> {
+    ) -> Result<(), Error> {
         if response.realm() != &*self.realm {
-            return Err(ServerError::WrongRealm);
+            return Err(Error::WrongRealm);
         }
         let algorithm = response.algorithm();
         if response.session() != self.session || !self.algorithms.contains(&algorithm) {
-            return Err(ServerError::UnofferedAlgorithm);
+            return Err(Error::UnofferedAlgorithm);
         }
         if !self.qop.contains(response.qop()) {
-            return Err(ServerError::UnofferedQop);
+            return Err(Error::UnofferedQop);
         }
         if response.opaque() != self.opaque.as_deref() {
-            return Err(ServerError::WrongOpaque);
+            return Err(Error::WrongOpaque);
         }
         if response.userhash() && !self.userhash {
-            return Err(ServerError::UnofferedUserhash);
+            return Err(Error::UnofferedUserhash);
         }
         if response.uri() != request.uri {
-            return Err(ServerError::UriMismatch);
+            return Err(Error::UriMismatch);
         }
         let body = match (response.qop(), request.body) {
-            (Qop::AuthInt, None) => return Err(ServerError::BodyRequired),
+            (Qop::AuthInt, None) => return Err(Error::BodyRequired),
             (_, body) => body.unwrap_or(&[]),
         };
         let ha1 = match secret {
             Secret::Ha1(ha1) => {
                 if !is_hex(ha1, algorithm.hex_len()) || ha1.bytes().any(|b| b.is_ascii_uppercase())
                 {
-                    return Err(ServerError::SecretMismatch);
+                    return Err(Error::SecretMismatch);
                 }
                 Cow::Borrowed(ha1)
             }
@@ -329,7 +329,7 @@ impl DigestServer {
                     ),
                 };
                 if !same_user {
-                    return Err(ServerError::BadCredentials);
+                    return Err(Error::BadCredentials);
                 }
                 Cow::Owned(algorithm.ha1(username, &self.realm, password))
             }
@@ -354,12 +354,12 @@ impl DigestServer {
         let actual = response.response_hex().to_ascii_lowercase();
         if bool::from(expected.as_bytes().ct_eq(actual.as_bytes())) {
             if response.stale() {
-                Err(ServerError::Stale)
+                Err(Error::Stale)
             } else {
                 Ok(())
             }
         } else {
-            Err(ServerError::BadCredentials)
+            Err(Error::BadCredentials)
         }
     }
 }
@@ -379,11 +379,11 @@ mod tests {
         }
     }
 
-    fn b() -> DigestServerBuilder {
-        DigestServer::builder("testrealm@host.com").opaque("5ccc069c403ebaf9f0171e9517f40e41")
+    fn b() -> ServerBuilder {
+        Server::builder("testrealm@host.com").opaque("5ccc069c403ebaf9f0171e9517f40e41")
     }
 
-    fn s() -> DigestServer {
+    fn s() -> Server {
         b().qop(Qop::Auth | Qop::AuthInt).build().unwrap()
     }
 
@@ -396,12 +396,12 @@ mod tests {
     }
 
     fn verify(
-        server: &DigestServer,
+        server: &Server,
         header: &str,
         request: Request<'_>,
         secret: Secret<'_>,
-    ) -> Result<(), ServerError> {
-        let r = DigestResponse::parse(header)?.nonce_checked_externally();
+    ) -> Result<(), Error> {
+        let r = CredentialsRef::parse(header)?.nonce_checked_externally();
         server.verify(&r, request, secret)
     }
 
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn rfc7616_3_9() {
-        let s = DigestServer::builder("http-auth@example.org")
+        let s = Server::builder("http-auth@example.org")
             .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
             .qop(Qop::Auth | Qop::AuthInt)
             .opaque("FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS")
@@ -434,7 +434,7 @@ mod tests {
         for header in [RFC7616_SHA256, RFC7616_MD5] {
             assert_eq!(verify(&s, header, get("/dir/index.html"), secret), Ok(()));
         }
-        let builder = DigestServer::builder("api@example.org")
+        let builder = Server::builder("api@example.org")
             .algorithms(&[Algorithm::Sha512_256])
             .opaque("HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS");
         let s = builder.clone().userhash(true).build().unwrap();
@@ -449,13 +449,13 @@ mod tests {
 
     #[test]
     fn verify_errors() {
-        use ServerError::*;
+        use Error::*;
         let s = s();
         let ok = get("/dir/index.html");
         let r = |from: &str, to: &str| RFC2617.replace(from, to);
         let sha = b().algorithms(&[Algorithm::Sha256]).build().unwrap();
         let int = b().qop(Qop::AuthInt.into()).build().unwrap();
-        let noop = DigestServer::builder("testrealm@host.com")
+        let noop = Server::builder("testrealm@host.com")
             .qop(Qop::Auth.into())
             .build()
             .unwrap();
@@ -467,7 +467,7 @@ mod tests {
             .ha1("Mufasa", "testrealm@host.com", "Circle Of Life")
             .to_ascii_uppercase();
         #[rustfmt::skip]
-        let cases: [(&DigestServer, String, Request<'_>, Secret<'_>, ServerError); 15] = [
+        let cases: [(&Server, String, Request<'_>, Secret<'_>, Error); 15] = [
             (&s, r("realm=\"testrealm@host.com\"", "realm=\"other\""), ok, pw("Mufasa", "Circle Of Life"), WrongRealm),
             (&sha, RFC2617.into(), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
             (&s, r("opaque=", "algorithm=MD5-sess, opaque="), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
@@ -516,7 +516,7 @@ mod tests {
             crate::parse_challenges(c.as_str()).unwrap()[0].body.params().unwrap().iter()
                 .find(|(k, _)| *k == "nonce").unwrap().1.to_unescaped().into_owned()
         };
-        let s = DigestServer::builder("cams@example.com")
+        let s = Server::builder("cams@example.com")
             .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
             .opaque("xyz")
             .userhash(true)
@@ -531,7 +531,7 @@ mod tests {
         assert!(s.challenges(true, now)[0]
             .as_str()
             .contains("\", stale=true, algorithm=SHA-256"));
-        let sess = DigestServer::builder("r")
+        let sess = Server::builder("r")
             .session(true)
             .qop(Qop::Auth | Qop::AuthInt)
             .domain(&["/a", "/b"])
@@ -545,25 +545,25 @@ mod tests {
 
     #[test]
     fn builder_errors() {
-        let b = || DigestServer::builder("r");
+        let b = || Server::builder("r");
         for result in [
             b().algorithms(&[]).build(),
             b().algorithms(&[Algorithm::Md5, Algorithm::Md5]).build(),
             b().qop(QopSet(0)).build(),
-            DigestServer::builder("r\n").build(),
+            Server::builder("r\n").build(),
             b().opaque("caf\u{e9}").build(),
             b().domain(&["/a\0b"]).build(),
             b().domain(&[""]).build(),
             b().nonce_lifetime(Duration::from_millis(999)).build(),
             b().nonce_lifetime(Duration::from_secs(0)).build(),
         ] {
-            assert!(matches!(result, Err(ServerError::InvalidConfig(_))));
+            assert!(matches!(result, Err(Error::InvalidConfig(_))));
         }
     }
 
     #[test]
     fn check_nonce_cycle() {
-        let s = DigestServer::builder("r").build().unwrap();
+        let s = Server::builder("r").build().unwrap();
         let t0 = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let nonce = nonce::issue(&s.nonce_key.0, "r", t0, [1; 8]);
         let header = format!(
@@ -572,32 +572,29 @@ mod tests {
             "0".repeat(32)
         );
         #[rustfmt::skip]
-        assert!(!s.check_nonce(DigestResponse::parse(&header).unwrap(), t0).unwrap().stale());
+        assert!(!s.check_nonce(CredentialsRef::parse(&header).unwrap(), t0).unwrap().stale());
         assert!(s
             .check_nonce(
-                DigestResponse::parse(&header).unwrap(),
+                CredentialsRef::parse(&header).unwrap(),
                 t0 + Duration::from_secs(301)
             )
             .unwrap()
             .stale());
-        let other = DigestServer::builder("r").build().unwrap();
+        let other = Server::builder("r").build().unwrap();
         #[rustfmt::skip]
-        assert_eq!(other.check_nonce(DigestResponse::parse(&header).unwrap(), t0).unwrap_err(), ServerError::BadNonce);
+        assert_eq!(other.check_nonce(CredentialsRef::parse(&header).unwrap(), t0).unwrap_err(), Error::BadNonce);
     }
 
     #[test]
     fn stale() {
         use std::convert::TryFrom as _;
-        let s = DigestServer::builder("r").build().unwrap();
+        let s = Server::builder("r").build().unwrap();
         let t0 = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let later = t0 + Duration::from_secs(301);
         let c = &s.challenges(false, t0)[0];
         let c = &crate::parse_challenges(c.as_str()).unwrap()[0];
-        let mut client = crate::DigestClient::try_from(c).unwrap();
-        for (password, expected) in [
-            ("p", ServerError::Stale),
-            ("q", ServerError::BadCredentials),
-        ] {
+        let mut client = crate::digest::Client::try_from(c).unwrap();
+        for (password, expected) in [("p", Error::Stale), ("q", Error::BadCredentials)] {
             let header = client
                 .respond(&crate::PasswordParams {
                     username: "u",
@@ -608,7 +605,7 @@ mod tests {
                 })
                 .unwrap();
             let r = s
-                .check_nonce(DigestResponse::parse(&header).unwrap(), later)
+                .check_nonce(CredentialsRef::parse(&header).unwrap(), later)
                 .unwrap();
             assert_eq!(s.verify(&r, get("/x"), pw("u", "p")), Err(expected));
         }
@@ -620,7 +617,7 @@ mod tests {
     #[test]
     fn shared_across_threads() {
         fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<DigestServer>();
+        assert_send_sync::<Server>();
     }
 
     #[test]
@@ -632,7 +629,7 @@ mod tests {
             d
         );
         assert!(!format!("{:?}", pw("Mufasa", "Circle Of Life")).contains("Circle"));
-        let d = format!("{:?}", DigestServer::builder("r").nonce_key([9; 32]));
+        let d = format!("{:?}", Server::builder("r").nonce_key([9; 32]));
         assert!(d.contains("<redacted>") && !d.contains("[9, 9, 9"), "{}", d);
     }
 }

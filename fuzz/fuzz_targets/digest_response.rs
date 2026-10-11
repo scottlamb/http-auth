@@ -8,13 +8,13 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use http_auth::digest::{Algorithm, DigestResponse, DigestServer, Qop, Request, Secret};
+use http_auth::digest::{self, Algorithm, Qop, Request, Secret};
 
 fuzz_target!(|data: &str| {
-    let Ok(r) = DigestResponse::parse(data) else {
+    let Ok(r) = digest::CredentialsRef::parse(data) else {
         return;
     };
-    let server = DigestServer::builder("r")
+    let server = digest::Server::builder("r")
         .algorithms(&[Algorithm::Md5, Algorithm::Sha256])
         .qop(Qop::Auth | Qop::AuthInt)
         .userhash(true)
@@ -22,7 +22,7 @@ fuzz_target!(|data: &str| {
         .build()
         .unwrap();
     let _ = server.check_nonce(r, std::time::SystemTime::now());
-    let Ok(r) = DigestResponse::parse(data) else {
+    let Ok(r) = digest::CredentialsRef::parse(data) else {
         return;
     };
     let r = r.nonce_checked_externally();

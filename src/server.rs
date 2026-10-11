@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Scott Lamb <slamb@slamb.org>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Types shared by the server-side [`crate::basic::BasicServer`] and
-//! [`crate::digest::DigestServer`].
+//! Types shared by the server-side [`crate::basic::Server`] and
+//! [`crate::digest::Server`].
 
 /// A challenge, ready to send as a `WWW-Authenticate` (401) or
 /// `Proxy-Authenticate` (407) value.
@@ -41,7 +41,7 @@ impl From<Challenge> for http10::HeaderValue {
 /// Why a server rejected credentials, or why a server couldn't be configured.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum ServerError {
+pub enum Error {
     /// The credentials use a different scheme.
     WrongScheme,
 
@@ -85,75 +85,73 @@ pub enum ServerError {
     InvalidConfig(&'static str),
 }
 
-impl ServerError {
+impl Error {
     /// The HTTP status code to respond with:
     ///
     /// *   400: a malformed request or `uri` mismatch.
-    /// *   401: an authentication failure (including [`ServerError::Stale`]).
+    /// *   401: an authentication failure (including [`Error::Stale`]).
     /// *   500: a caller or configuration bug.
     pub fn status(&self) -> u16 {
         match self {
-            ServerError::Malformed(_) | ServerError::UriMismatch => 400,
-            ServerError::WrongScheme
-            | ServerError::BadNonce
-            | ServerError::Stale
-            | ServerError::WrongRealm
-            | ServerError::UnofferedAlgorithm
-            | ServerError::UnofferedQop
-            | ServerError::WrongOpaque
-            | ServerError::UnofferedUserhash
-            | ServerError::SecretMismatch
-            | ServerError::BadCredentials => 401,
-            ServerError::BodyRequired | ServerError::InvalidConfig(_) => 500,
+            Error::Malformed(_) | Error::UriMismatch => 400,
+            Error::WrongScheme
+            | Error::BadNonce
+            | Error::Stale
+            | Error::WrongRealm
+            | Error::UnofferedAlgorithm
+            | Error::UnofferedQop
+            | Error::WrongOpaque
+            | Error::UnofferedUserhash
+            | Error::SecretMismatch
+            | Error::BadCredentials => 401,
+            Error::BodyRequired | Error::InvalidConfig(_) => 500,
         }
     }
 }
 
-impl std::fmt::Display for ServerError {
+impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerError::WrongScheme => f.write_str("credentials use a different scheme"),
-            ServerError::Malformed(why) => write!(f, "malformed credentials: {}", why),
-            ServerError::BadNonce => f.write_str("nonce was not issued by this server"),
-            ServerError::Stale => f.write_str("nonce has expired"),
-            ServerError::WrongRealm => f.write_str("realm does not match"),
-            ServerError::UnofferedAlgorithm => f.write_str("algorithm was not offered"),
-            ServerError::UnofferedQop => f.write_str("qop was not offered"),
-            ServerError::WrongOpaque => f.write_str("opaque does not match"),
-            ServerError::UnofferedUserhash => f.write_str("userhash was not offered"),
-            ServerError::UriMismatch => f.write_str("uri does not match the request-target"),
-            ServerError::BodyRequired => f.write_str("qop=auth-int requires the request body"),
-            ServerError::SecretMismatch => {
-                f.write_str("secret does not fit the response's algorithm")
-            }
-            ServerError::BadCredentials => f.write_str("wrong username or password"),
-            ServerError::InvalidConfig(why) => write!(f, "invalid server configuration: {}", why),
+            Error::WrongScheme => f.write_str("credentials use a different scheme"),
+            Error::Malformed(why) => write!(f, "malformed credentials: {}", why),
+            Error::BadNonce => f.write_str("nonce was not issued by this server"),
+            Error::Stale => f.write_str("nonce has expired"),
+            Error::WrongRealm => f.write_str("realm does not match"),
+            Error::UnofferedAlgorithm => f.write_str("algorithm was not offered"),
+            Error::UnofferedQop => f.write_str("qop was not offered"),
+            Error::WrongOpaque => f.write_str("opaque does not match"),
+            Error::UnofferedUserhash => f.write_str("userhash was not offered"),
+            Error::UriMismatch => f.write_str("uri does not match the request-target"),
+            Error::BodyRequired => f.write_str("qop=auth-int requires the request body"),
+            Error::SecretMismatch => f.write_str("secret does not fit the response's algorithm"),
+            Error::BadCredentials => f.write_str("wrong username or password"),
+            Error::InvalidConfig(why) => write!(f, "invalid server configuration: {}", why),
         }
     }
 }
 
-impl std::error::Error for ServerError {}
+impl std::error::Error for Error {}
 
 /// Parses a scheme's credentials and checks the scheme name.
 pub(crate) fn parse_scheme<'i>(
     header: &'i str,
     scheme: &str,
-) -> Result<crate::CredentialsRef<'i>, ServerError> {
+) -> Result<crate::CredentialsRef<'i>, Error> {
     use crate::parse_credentials;
-    let c = parse_credentials(header)
-        .map_err(|_| ServerError::Malformed("invalid credentials syntax"))?;
+    let c =
+        parse_credentials(header).map_err(|_| Error::Malformed("invalid credentials syntax"))?;
     if !c.scheme.eq_ignore_ascii_case(scheme) {
-        return Err(ServerError::WrongScheme);
+        return Err(Error::WrongScheme);
     }
     Ok(c)
 }
 
 /// Validates a realm value.
-pub(crate) fn check_realm(realm: &str) -> Result<(), ServerError> {
+pub(crate) fn check_realm(realm: &str) -> Result<(), Error> {
     if crate::render::is_quotable(realm) {
         Ok(())
     } else {
-        Err(ServerError::InvalidConfig("realm must be quotable"))
+        Err(Error::InvalidConfig("realm must be quotable"))
     }
 }
 

@@ -2,12 +2,16 @@
 
 ### Breaking
 
-*   `ChallengeRef.params` is replaced by `body: AuthBody`, which is either
+*   `ChallengeRef.params` is replaced by `body: AuthBodyRef`, which is either
     `Token68` or `Params`. `ChallengeParser` accepts `token68` challenges and
     `1*SP` between the scheme and body ([RFC 9110 section
     11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
-*   `ParamValue::to_unescaped` now returns `std::borrow::Cow<str>` instead of
-    `String`.
+*   `ParamValue` is renamed to `ParamValueRef`, for consistency with
+    `ChallengeRef`. `ParamValueRef::to_unescaped` now returns
+    `std::borrow::Cow<str>` instead of `String`.
+*   `basic::BasicClient` and `digest::DigestClient` are renamed to
+    `basic::Client` and `digest::Client`, and are no longer re-exported from
+    the crate root.
 *   `digest::Algorithm::Sha512Trunc256` is renamed to `Sha512_256`, matching
     the `sha2` crate's naming.
 *   `PasswordClientBuilder::challenge`, `challenges`, and `header_value` are
@@ -18,8 +22,9 @@
 
 ### Added
 
-*   server support behind the `server` feature: `basic::BasicServer`,
-    `digest::DigestServer`, `server::Challenge`, `server::ServerError`.
+*   server support behind the `server` feature: `basic::Server`,
+    `basic::Credentials`, `digest::Server`, `digest::CredentialsRef`,
+    `server::Challenge`, `server::Error`.
 *   `parse_credentials` and `CredentialsRef` for `Authorization` /
     `Proxy-Authorization` values.
 *   `impl Display for ChallengeRef`.

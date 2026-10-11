@@ -13,12 +13,8 @@
 use std::convert::TryFrom;
 use std::time::SystemTime;
 
-use http_auth::basic::{BasicClient, BasicCredentials, BasicServer};
-use http_auth::digest::{
-    Algorithm, DigestClient, DigestResponse, DigestServer, Qop, QopSet, Request, Secret,
-};
-use http_auth::server::ServerError;
-use http_auth::{parse_challenges, PasswordParams};
+use http_auth::digest::{Algorithm, Qop, QopSet, Request, Secret};
+use http_auth::{basic, digest, parse_challenges, server, PasswordParams};
 
 /// xorshift64*.
 struct Rng(u64);
@@ -51,18 +47,18 @@ fn check(rng: &mut Rng, algorithm: Algorithm, session: bool, qop: QopSet, userha
     let username = rng.word(ANY);
     let password = rng.word(ANY);
     let ctx = format!("{:?} s={} q={:?} uh={} body={:?}", algorithm, session, qop, userhash, body);
-    let server = DigestServer::builder(realm.clone())
+    let server = digest::Server::builder(realm.clone())
         .algorithms(&[algorithm]).session(session).qop(qop).userhash(userhash).opaque("op").build().unwrap();
     let challenge = server.challenges(false, now)[0].as_str().to_owned();
     assert_eq!(challenge.contains("userhash=true"), userhash, "{}", ctx);
-    let mut client = DigestClient::try_from(&parse_challenges(&challenge).unwrap()[0]).unwrap();
+    let mut client = digest::Client::try_from(&parse_challenges(&challenge).unwrap()[0]).unwrap();
     let header = client.respond(&PasswordParams { username: &username, password: &password, uri: "/x?y=1", method: "POST", body }).unwrap();
     assert_eq!(header.contains("userhash=true"), userhash, "{}", ctx);
     if !userhash && !username.is_ascii() {
         assert!(header.contains("username*="), "{} {:?}", ctx, header);
     }
     let request = Request { method: "POST", uri: "/x?y=1", body };
-    let response = server.check_nonce(DigestResponse::parse(&header).expect(&ctx), now).expect(&ctx);
+    let response = server.check_nonce(digest::CredentialsRef::parse(&header).expect(&ctx), now).expect(&ctx);
     let pw = Secret::Password { username: &username, password: &password };
     assert_eq!(server.verify(&response, request, pw), Ok(()), "{}", ctx);
     assert_eq!(server.verify(&response, request, Secret::Ha1(&algorithm.ha1(&username, &realm, &password))), Ok(()), "{}", ctx);
@@ -71,11 +67,11 @@ fn check(rng: &mut Rng, algorithm: Algorithm, session: bool, qop: QopSet, userha
         (request, Secret::Password { username: "wrong", password: &password }),
         (Request { method: "PUT", uri: "/x?y=1", body }, pw),
     ] {
-        assert_eq!(server.verify(&response, request, secret), Err(ServerError::BadCredentials), "{}", ctx);
+        assert_eq!(server.verify(&response, request, secret), Err(server::Error::BadCredentials), "{}", ctx);
     }
     if response.qop() == Qop::AuthInt {
         let tampered = Request { method: "POST", uri: "/x?y=1", body: Some(&b"tampered"[..]) };
-        assert_eq!(server.verify(&response, tampered, pw), Err(ServerError::BadCredentials), "{}", ctx);
+        assert_eq!(server.verify(&response, tampered, pw), Err(server::Error::BadCredentials), "{}", ctx);
     }
 }
 
@@ -110,13 +106,13 @@ fn basic_round_trip() {
     for _ in 0..200 {
         let username = rng.word(&["a", "Z", "0", " ", "\"", "@", "\u{e4}", "\u{1f600}"]); // no ':'
         let password = rng.word(ANY);
-        let server = BasicServer::new(rng.word(ASCII))
+        let server = basic::Server::new(rng.word(ASCII))
             .unwrap()
             .charset_utf8(true);
         let challenge = server.challenge();
         let parsed = parse_challenges(challenge.as_str()).unwrap();
-        let client = BasicClient::try_from(&parsed[0]).unwrap();
-        let creds = BasicCredentials::parse(&client.respond(&username, &password)).unwrap();
+        let client = basic::Client::try_from(&parsed[0]).unwrap();
+        let creds = basic::Credentials::parse(&client.respond(&username, &password)).unwrap();
         assert_eq!(
             (creds.username(), creds.password()),
             (&username[..], &password[..])

@@ -22,7 +22,8 @@ default = ["basic-scheme", "digest-scheme"]
 # Enable server-side code: issuing challenges and verifying credentials.
 server = ["hmac", "sha2", "subtle"]
 
-# Enable code to respond to challenges of the given scheme.
+# Enable support for the given scheme: client side, and server side with
+# `server`.
 basic-scheme = ["base64"]
 digest-scheme = ["digest", "hex", "md-5", "rand", "sha2"]
 

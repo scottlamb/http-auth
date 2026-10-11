@@ -14,9 +14,9 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use http_auth::basic::{BasicCredentials, BasicServer};
-use http_auth::digest::{Algorithm, DigestResponse, DigestServer, Secret};
-use http_auth::server::{Challenge, ServerError};
+use http_auth::digest::{Algorithm, Secret};
+use http_auth::server::Challenge;
+use http_auth::{basic, digest, server};
 use http_body_util::Empty;
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{AUTHORIZATION, WWW_AUTHENTICATE};
@@ -26,14 +26,14 @@ use hyper_util::rt::TokioIo;
 const BIND: &str = "127.0.0.1:8080";
 
 struct Servers {
-    basic: BasicServer,
-    digest: DigestServer,
+    basic: basic::Server,
+    digest: digest::Server,
 }
 
 fn main() {
     let servers = Arc::new(Servers {
-        basic: BasicServer::new("WallyWorld").unwrap(),
-        digest: DigestServer::builder("http-auth@example.org")
+        basic: basic::Server::new("WallyWorld").unwrap(),
+        digest: digest::Server::builder("http-auth@example.org")
             .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
             .build()
             .unwrap(),
@@ -84,12 +84,12 @@ fn handle(servers: &Servers, req: Request<Incoming>) -> Response<Empty<Bytes>> {
     resp.body(Empty::new()).unwrap()
 }
 
-fn verify_basic(server: &BasicServer, header: &str) -> (u16, Vec<Challenge>) {
-    let outcome = BasicCredentials::parse(header).and_then(|c| {
+fn verify_basic(server: &basic::Server, header: &str) -> (u16, Vec<Challenge>) {
+    let outcome = basic::Credentials::parse(header).and_then(|c| {
         if c.username() == "aladdin" && c.verify_password("open sesame") {
             Ok(())
         } else {
-            Err(ServerError::BadCredentials)
+            Err(server::Error::BadCredentials)
         }
     });
     match outcome {
@@ -99,13 +99,13 @@ fn verify_basic(server: &BasicServer, header: &str) -> (u16, Vec<Challenge>) {
 }
 
 fn verify_digest(
-    server: &DigestServer,
+    server: &digest::Server,
     header: &str,
     method: &str,
     uri: &str,
 ) -> (u16, Vec<Challenge>) {
     let now = SystemTime::now();
-    let outcome = DigestResponse::parse(header).and_then(|r| {
+    let outcome = digest::CredentialsRef::parse(header).and_then(|r| {
         let r = server.check_nonce(r, now)?;
         server.verify(
             &r,
@@ -122,7 +122,7 @@ fn verify_digest(
     });
     match outcome {
         Ok(()) => (200, vec![]),
-        Err(ServerError::Stale) => (401, server.challenges(true, now)),
+        Err(server::Error::Stale) => (401, server.challenges(true, now)),
         Err(e) => (e.status(), server.challenges(false, now)),
     }
 }

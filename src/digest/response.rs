@@ -7,15 +7,15 @@
 use std::{borrow::Cow, marker::PhantomData};
 
 use super::{is_hex, Algorithm, Qop};
-use crate::server::{parse_scheme, ServerError};
+use crate::server::{parse_scheme, Error};
 
-/// Typestate for a [`DigestResponse`] whose nonce hasn't been checked yet.
+/// Typestate for a [`CredentialsRef`] whose nonce hasn't been checked yet.
 #[derive(Debug)]
 pub enum Unchecked {}
 
-/// Typestate for a [`DigestResponse`] whose nonce was checked by
-/// [`super::DigestServer::check_nonce`] or vouched for via
-/// [`DigestResponse::nonce_checked_externally`].
+/// Typestate for a [`CredentialsRef`] whose nonce was checked by
+/// [`super::Server::check_nonce`] or vouched for via
+/// [`CredentialsRef::nonce_checked_externally`].
 #[derive(Debug)]
 pub enum NonceChecked {}
 
@@ -28,16 +28,16 @@ pub enum Username<'a> {
 
     /// The userhash sent with `userhash=true` ([RFC 7616 section
     /// 3.4.4](https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.4));
-    /// see [`super::DigestServer::hash_username`].
+    /// see [`super::Server::hash_username`].
     Hashed(&'a str),
 }
 
 /// A parsed `Digest` `Authorization` or `Proxy-Authorization` header.
 ///
-/// `S` is [`Unchecked`] after [`DigestResponse::parse`] and [`NonceChecked`]
+/// `S` is [`Unchecked`] after [`CredentialsRef::parse`] and [`NonceChecked`]
 /// once the nonce has been checked; only the latter can be verified.
 #[derive(Debug)]
-pub struct DigestResponse<'i, S = Unchecked> {
+pub struct CredentialsRef<'i, S = Unchecked> {
     username: Cow<'i, str>,
     userhash: bool,
     realm: Cow<'i, str>,
@@ -56,17 +56,17 @@ pub struct DigestResponse<'i, S = Unchecked> {
     state: PhantomData<S>,
 }
 
-impl<'i> DigestResponse<'i, Unchecked> {
+impl<'i> CredentialsRef<'i, Unchecked> {
     /// Parses a header value. This checks syntax only; see
-    /// [`super::DigestServer::check_nonce`] and [`super::DigestServer::verify`].
+    /// [`super::Server::check_nonce`] and [`super::Server::verify`].
     ///
     /// Unknown parameters are ignored; `algorithm`, `qop` and `nc` may be
     /// quoted.
     ///
     /// Non-ASCII usernames must use `username*`
     /// ([RFC 8187](https://datatracker.ietf.org/doc/html/rfc8187)).
-    pub fn parse(header_value: &'i str) -> Result<Self, ServerError> {
-        use ServerError::Malformed;
+    pub fn parse(header_value: &'i str) -> Result<Self, Error> {
+        use Error::Malformed;
         let c = parse_scheme(header_value, "Digest")?;
         let params = c.body.params().ok_or(Malformed("expected auth-params"))?;
         let [username, username_ext, realm, uri, nonce, cnonce, nc, qop, response, opaque, algorithm, userhash] =
@@ -136,7 +136,7 @@ impl<'i> DigestResponse<'i, Unchecked> {
                 "response is not a hex digest of the algorithm's length",
             ));
         }
-        Ok(DigestResponse {
+        Ok(CredentialsRef {
             username,
             userhash,
             realm: realm.ok_or(Malformed("missing realm"))?.to_unescaped(),
@@ -159,12 +159,12 @@ impl<'i> DigestResponse<'i, Unchecked> {
     /// Declares that the caller checked the nonce itself, e.g. against a
     /// store tracking the highest `nc` per `(nonce, cnonce)` for replay
     /// protection ([RFC 7616 section 5.5](https://datatracker.ietf.org/doc/html/rfc7616#section-5.5)).
-    pub fn nonce_checked_externally(self) -> DigestResponse<'i, NonceChecked> {
+    pub fn nonce_checked_externally(self) -> CredentialsRef<'i, NonceChecked> {
         self.into_checked(false)
     }
 
-    pub(crate) fn into_checked(self, stale: bool) -> DigestResponse<'i, NonceChecked> {
-        DigestResponse {
+    pub(crate) fn into_checked(self, stale: bool) -> CredentialsRef<'i, NonceChecked> {
+        CredentialsRef {
             username: self.username,
             userhash: self.userhash,
             realm: self.realm,
@@ -185,7 +185,7 @@ impl<'i> DigestResponse<'i, Unchecked> {
     }
 }
 
-impl<'i, S> DigestResponse<'i, S> {
+impl<'i, S> CredentialsRef<'i, S> {
     /// Returns who the client claims to be.
     pub fn username(&self) -> Username<'_> {
         if self.userhash {
@@ -260,7 +260,7 @@ impl<'i, S> DigestResponse<'i, S> {
     }
 }
 
-impl<'i> DigestResponse<'i, NonceChecked> {
+impl<'i> CredentialsRef<'i, NonceChecked> {
     /// Returns true if the nonce is authentic but expired.
     pub fn stale(&self) -> bool {
         self.stale
@@ -274,7 +274,7 @@ pub(crate) mod tests {
 
     #[test]
     fn parses_rfc2617() {
-        let r = DigestResponse::parse(RFC2617).unwrap();
+        let r = CredentialsRef::parse(RFC2617).unwrap();
         assert_eq!(r.username(), Username::Plain("Mufasa"));
         assert_eq!(r.realm(), "testrealm@host.com");
         assert_eq!(r.nonce(), "dcd98b7102dd2f0e8b11d0f600bfb0c093");
@@ -298,7 +298,7 @@ pub(crate) mod tests {
             "username*=UTF-8''J%C3%A4s%C3%B8n%20Doe",
         );
         assert_eq!(
-            DigestResponse::parse(&utf8).unwrap().username(),
+            CredentialsRef::parse(&utf8).unwrap().username(),
             Username::Plain("J\u{e4}s\u{f8}n Doe")
         );
         let latin1 = RFC2617.replace(
@@ -306,7 +306,7 @@ pub(crate) mod tests {
             "username*=iso-8859-1'en'J%E4s%F8n%20Doe",
         );
         assert_eq!(
-            DigestResponse::parse(&latin1).unwrap().username(),
+            CredentialsRef::parse(&latin1).unwrap().username(),
             Username::Plain("J\u{e4}s\u{f8}n Doe")
         );
     }
@@ -321,7 +321,7 @@ pub(crate) mod tests {
                 .replace("nc=00000001", "nc=\"0000000A\"")
                 .replace("opaque=", "algorithm=md5, foo=bar, opaque=")
         );
-        let r = DigestResponse::parse(&s).unwrap();
+        let r = CredentialsRef::parse(&s).unwrap();
         assert_eq!((r.nc(), r.nc_hex()), (10, "0000000A"));
         assert_eq!(r.algorithm(), Algorithm::Md5);
         assert_eq!(r.qop(), Qop::Auth);
@@ -331,16 +331,16 @@ pub(crate) mod tests {
             "username=\"ABCDEF0123456789ABCDEF0123456789\", userhash=true",
         );
         assert_eq!(
-            DigestResponse::parse(&s).unwrap().username(),
+            CredentialsRef::parse(&s).unwrap().username(),
             Username::Hashed("abcdef0123456789abcdef0123456789")
         );
     }
 
     #[test]
     fn errors() {
-        use ServerError::{Malformed, WrongScheme};
+        use Error::{Malformed, WrongScheme};
         let r = |from: &str, to: &str| RFC2617.replace(from, to);
-        let cases: Vec<(String, ServerError)> = vec![
+        let cases: Vec<(String, Error)> = vec![
             ("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==".into(), WrongScheme),
             ("Digest abc".into(), Malformed("expected auth-params")),
             (r("qop=auth, ", ""), Malformed("missing qop")),
@@ -394,7 +394,7 @@ pub(crate) mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(
-                DigestResponse::parse(&input).unwrap_err(),
+                CredentialsRef::parse(&input).unwrap_err(),
                 expected,
                 "{:?}",
                 input

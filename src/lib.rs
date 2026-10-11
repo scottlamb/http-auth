@@ -74,6 +74,8 @@ assert!(matches!(pw_client, http_auth::PasswordClient::Basic(_)));
 "##
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// e.g. `basic::Client`, not `basic::BasicClient`.
+#![warn(clippy::module_name_repetitions)]
 
 use std::convert::TryFrom;
 
@@ -110,14 +112,6 @@ mod render;
 
 pub use parser::{parse_credentials, ChallengeParser};
 
-#[cfg(feature = "basic-scheme")]
-#[cfg_attr(docsrs, doc(cfg(feature = "basic-scheme")))]
-pub use crate::basic::BasicClient;
-
-#[cfg(feature = "digest-scheme")]
-#[cfg_attr(docsrs, doc(cfg(feature = "digest-scheme")))]
-pub use crate::digest::DigestClient;
-
 use crate::table::{char_classes, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 
 /// Returns true if `s` is a valid token (RFC 9110 section 5.6.2).
@@ -138,14 +132,14 @@ pub struct ChallengeRef<'i> {
     pub scheme: &'i str,
 
     /// The `token68` or auth-params.
-    pub body: AuthBody<'i>,
+    pub body: AuthBodyRef<'i>,
 }
 
 impl<'i> ChallengeRef<'i> {
     pub fn new(scheme: &'i str) -> Self {
         ChallengeRef {
             scheme,
-            body: AuthBody::Params(Vec::new()),
+            body: AuthBodyRef::Params(Vec::new()),
         }
     }
 }
@@ -156,8 +150,8 @@ impl std::fmt::Display for ChallengeRef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.scheme)?;
         let params = match &self.body {
-            AuthBody::Token68(t) => return write!(f, " {}", t),
-            AuthBody::Params(p) => p,
+            AuthBodyRef::Token68(t) => return write!(f, " {}", t),
+            AuthBodyRef::Params(p) => p,
         };
         for (i, (k, v)) in params.iter().enumerate() {
             f.write_str(if i == 0 { " " } else { ", " })?;
@@ -184,12 +178,12 @@ pub struct CredentialsRef<'i> {
     pub scheme: &'i str,
 
     /// The `token68` or auth-params.
-    pub body: AuthBody<'i>,
+    pub body: AuthBodyRef<'i>,
 }
 
 /// Body of a [`ChallengeRef`] or [`CredentialsRef`].
 #[derive(Clone, Eq, PartialEq)]
-pub enum AuthBody<'i> {
+pub enum AuthBodyRef<'i> {
     /// A `token68` ([RFC 9110 section 11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
     Token68(&'i str),
 
@@ -197,27 +191,27 @@ pub enum AuthBody<'i> {
     Params(Vec<ChallengeParamRef<'i>>),
 }
 
-impl<'i> AuthBody<'i> {
+impl<'i> AuthBodyRef<'i> {
     /// Returns the parameters, or `None` for a `token68` body.
     #[cfg(any(feature = "basic-scheme", feature = "digest-scheme"))]
     pub(crate) fn params(&self) -> Option<&[ChallengeParamRef<'i>]> {
         match self {
-            AuthBody::Token68(_) => None,
-            AuthBody::Params(p) => Some(p),
+            AuthBodyRef::Token68(_) => None,
+            AuthBodyRef::Params(p) => Some(p),
         }
     }
 }
 
-impl std::fmt::Debug for AuthBody<'_> {
+impl std::fmt::Debug for AuthBodyRef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AuthBody::Token68(t) => f.debug_tuple("Token68").field(t).finish(),
-            AuthBody::Params(p) => f.debug_tuple("Params").field(&ParamsPrinter(p)).finish(),
+            AuthBodyRef::Token68(t) => f.debug_tuple("Token68").field(t).finish(),
+            AuthBodyRef::Params(p) => f.debug_tuple("Params").field(&ParamsPrinter(p)).finish(),
         }
     }
 }
 
-type ChallengeParamRef<'i> = (&'i str, ParamValue<'i>);
+type ChallengeParamRef<'i> = (&'i str, ParamValueRef<'i>);
 
 struct ParamsPrinter<'i>(&'i [ChallengeParamRef<'i>]);
 
@@ -314,7 +308,7 @@ impl sealed::Sealed for &ChallengeRef<'_> {
 
         #[cfg(feature = "digest-scheme")]
         if self.scheme.eq_ignore_ascii_case("Digest") {
-            match DigestClient::try_from(self) {
+            match digest::Client::try_from(self) {
                 Ok(c) => builder.0 = Some(Ok(PasswordClient::Digest(c))),
                 Err(e) if builder.0.is_none() => builder.0 = Some(Err(e)),
                 _ => {}
@@ -324,7 +318,7 @@ impl sealed::Sealed for &ChallengeRef<'_> {
 
         #[cfg(feature = "basic-scheme")]
         if self.scheme.eq_ignore_ascii_case("Basic") && !matches!(builder.0, Some(Ok(_))) {
-            match BasicClient::try_from(self) {
+            match basic::Client::try_from(self) {
                 Ok(c) => builder.0 = Some(Ok(PasswordClient::Basic(c))),
                 Err(e) if builder.0.is_none() => builder.0 = Some(Err(e)),
                 _ => {}
@@ -465,11 +459,11 @@ assert!(matches!(client, PasswordClient::Basic(_)));
 pub enum PasswordClient {
     #[cfg(feature = "basic-scheme")]
     #[cfg_attr(docsrs, doc(cfg(feature = "basic-scheme")))]
-    Basic(BasicClient),
+    Basic(basic::Client),
 
     #[cfg(feature = "digest-scheme")]
     #[cfg_attr(docsrs, doc(cfg(feature = "digest-scheme")))]
-    Digest(DigestClient),
+    Digest(digest::Client),
 }
 
 /// Tries to create a `PasswordClient` from the single supplied challenge.
@@ -481,11 +475,11 @@ impl TryFrom<&ChallengeRef<'_>> for PasswordClient {
     fn try_from(value: &ChallengeRef<'_>) -> Result<Self, Self::Error> {
         #[cfg(feature = "basic-scheme")]
         if value.scheme.eq_ignore_ascii_case("Basic") {
-            return Ok(PasswordClient::Basic(BasicClient::try_from(value)?));
+            return Ok(PasswordClient::Basic(basic::Client::try_from(value)?));
         }
         #[cfg(feature = "digest-scheme")]
         if value.scheme.eq_ignore_ascii_case("Digest") {
-            return Ok(PasswordClient::Digest(DigestClient::try_from(value)?));
+            return Ok(PasswordClient::Digest(digest::Client::try_from(value)?));
         }
 
         Err(format!("unsupported challenge scheme {:?}", value.scheme))
@@ -602,9 +596,9 @@ impl PasswordClient {
 /// 4](https://datatracker.ietf.org/doc/html/rfc7616#section-4) for the `Digest`
 /// scheme.
 ///
-/// Note that most of these fields are only needed for [`DigestClient`]. Callers
+/// Note that most of these fields are only needed for [`digest::Client`]. Callers
 /// that only care about the `Basic` challenge scheme can use
-/// [`BasicClient::respond`] directly with only username and password.
+/// [`basic::Client::respond`] directly with only username and password.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct PasswordParams<'a> {
     pub username: &'a str,
@@ -656,7 +650,7 @@ pub struct PasswordParams<'a> {
 /// ## Example
 ///
 /// ```rust
-/// use http_auth::{parse_challenges, AuthBody, ChallengeRef, ParamValue};
+/// use http_auth::{parse_challenges, AuthBodyRef, ChallengeRef, ParamValueRef};
 ///
 /// // When all challenges are well-formed, returns them.
 /// assert_eq!(
@@ -664,11 +658,11 @@ pub struct PasswordParams<'a> {
 ///     vec![
 ///         ChallengeRef {
 ///             scheme: "UnsupportedSchemeA",
-///             body: AuthBody::Params(vec![]),
+///             body: AuthBodyRef::Params(vec![]),
 ///         },
 ///         ChallengeRef {
 ///             scheme: "Basic",
-///             body: AuthBody::Params(vec![("realm", ParamValue::try_from_escaped("foo").unwrap())]),
+///             body: AuthBodyRef::Params(vec![("realm", ParamValueRef::try_from_escaped("foo").unwrap())]),
 ///         },
 ///     ],
 /// );
@@ -685,9 +679,9 @@ pub fn parse_challenges(input: &str) -> Result<Vec<ChallengeRef<'_>>, parser::Er
 /// first repeated name.
 #[cfg(feature = "digest-scheme")]
 pub(crate) fn find_params<'a, 'i, const N: usize>(
-    params: &'a [(&'i str, ParamValue<'i>)],
+    params: &'a [(&'i str, ParamValueRef<'i>)],
     names: [&str; N],
-) -> Result<[Option<&'a ParamValue<'i>>; N], &'i str> {
+) -> Result<[Option<&'a ParamValueRef<'i>>; N], &'i str> {
     let mut found = [None; N];
     for (k, v) in params {
         if let Some(i) = names.iter().position(|n| k.eq_ignore_ascii_case(n)) {
@@ -699,11 +693,11 @@ pub(crate) fn find_params<'a, 'i, const N: usize>(
     Ok(found)
 }
 
-/// Parsed parameter value used within [`AuthBody`].
+/// Parsed parameter value used within [`AuthBodyRef`].
 ///
 /// The unescaped value is always valid within a quoted-string.
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct ParamValue<'i> {
+pub struct ParamValueRef<'i> {
     /// The number of backslash escapes in a quoted-text parameter; 0 for a plain token.
     escapes: usize,
 
@@ -712,8 +706,8 @@ pub struct ParamValue<'i> {
     escaped: &'i str,
 }
 
-impl<'i> ParamValue<'i> {
-    /// Tries to create a new `ParamValue` from an escaped sequence, primarily for testing.
+impl<'i> ParamValueRef<'i> {
+    /// Tries to create a new `ParamValueRef` from an escaped sequence, primarily for testing.
     ///
     /// Validates the sequence and counts the number of escapes.
     pub fn try_from_escaped(escaped: &'i str) -> Result<Self, String> {
@@ -796,7 +790,7 @@ impl<'i> ParamValue<'i> {
     }
 }
 
-impl std::fmt::Debug for ParamValue<'_> {
+impl std::fmt::Debug for ParamValueRef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "\"{}\"", self.escaped)
     }
@@ -805,7 +799,7 @@ impl std::fmt::Debug for ParamValue<'_> {
 #[cfg(test)]
 mod tests {
     use crate::table::{C_ATTR, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
-    use crate::ParamValue;
+    use crate::ParamValueRef;
 
     /// Prints the character classes of all ASCII bytes from the table.
     ///
@@ -843,35 +837,37 @@ mod tests {
 
     #[test]
     fn try_from_escaped() {
-        assert_eq!(ParamValue::try_from_escaped("").unwrap().escapes, 0);
-        assert_eq!(ParamValue::try_from_escaped("foo").unwrap().escapes, 0);
-        assert_eq!(ParamValue::try_from_escaped("\\\"").unwrap().escapes, 1);
+        assert_eq!(ParamValueRef::try_from_escaped("").unwrap().escapes, 0);
+        assert_eq!(ParamValueRef::try_from_escaped("foo").unwrap().escapes, 0);
+        assert_eq!(ParamValueRef::try_from_escaped("\\\"").unwrap().escapes, 1);
         assert_eq!(
-            ParamValue::try_from_escaped("foo\\\"bar").unwrap().escapes,
+            ParamValueRef::try_from_escaped("foo\\\"bar")
+                .unwrap()
+                .escapes,
             1
         );
         assert_eq!(
-            ParamValue::try_from_escaped("foo\\\"bar\\\"baz")
+            ParamValueRef::try_from_escaped("foo\\\"bar\\\"baz")
                 .unwrap()
                 .escapes,
             2
         );
-        ParamValue::try_from_escaped("\\").unwrap_err(); // ends in slash
-        ParamValue::try_from_escaped("\"").unwrap_err(); // not valid qdtext
-        ParamValue::try_from_escaped("\n").unwrap_err(); // not valid qdtext
-        ParamValue::try_from_escaped("\\\n").unwrap_err(); // not valid escape
+        ParamValueRef::try_from_escaped("\\").unwrap_err(); // ends in slash
+        ParamValueRef::try_from_escaped("\"").unwrap_err(); // not valid qdtext
+        ParamValueRef::try_from_escaped("\n").unwrap_err(); // not valid qdtext
+        ParamValueRef::try_from_escaped("\\\n").unwrap_err(); // not valid escape
     }
 
     #[test]
     #[should_panic]
     fn new_rejects_unquotable() {
-        ParamValue::new(0, "\n");
+        ParamValueRef::new(0, "\n");
     }
 
     #[test]
     fn unescape() {
         assert_eq!(
-            &ParamValue {
+            &ParamValueRef {
                 escapes: 0,
                 escaped: ""
             }
@@ -879,7 +875,7 @@ mod tests {
             ""
         );
         assert_eq!(
-            &ParamValue {
+            &ParamValueRef {
                 escapes: 0,
                 escaped: "foo"
             }
@@ -887,7 +883,7 @@ mod tests {
             "foo"
         );
         assert_eq!(
-            &ParamValue {
+            &ParamValueRef {
                 escapes: 1,
                 escaped: "\\foo"
             }
@@ -895,7 +891,7 @@ mod tests {
             "foo"
         );
         assert_eq!(
-            &ParamValue {
+            &ParamValueRef {
                 escapes: 1,
                 escaped: "fo\\o"
             }
@@ -903,7 +899,7 @@ mod tests {
             "foo"
         );
         assert_eq!(
-            &ParamValue {
+            &ParamValueRef {
                 escapes: 1,
                 escaped: "foo\\bar"
             }
@@ -911,7 +907,7 @@ mod tests {
             "foobar"
         );
         assert_eq!(
-            &ParamValue {
+            &ParamValueRef {
                 escapes: 3,
                 escaped: "\\foo\\ba\\r"
             }

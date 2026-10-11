@@ -20,14 +20,14 @@ mod server;
 
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use self::response::{DigestResponse, NonceChecked, Unchecked, Username};
+pub use self::response::{CredentialsRef, NonceChecked, Unchecked, Username};
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use self::server::{DigestServer, DigestServerBuilder, Request, Secret};
+pub use self::server::{Request, Secret, Server, ServerBuilder};
 
 /// "Quality of protection" value.
 ///
-/// The values here can be used in a bitmask as in [`DigestClient::qop`].
+/// The values here can be used in a bitmask as in [`Client::qop`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
@@ -134,10 +134,10 @@ impl QopSet {
 ///
 /// ## Implementation notes
 ///
-/// *   Recalculates `H(A1)` on each [`DigestClient::respond`] call. It'd be
+/// *   Recalculates `H(A1)` on each [`Client::respond`] call. It'd be
 ///     more CPU-efficient to calculate `H(A1)` only once by supplying the
 ///     username and password at construction time or by caching (username,
-///     password) -> `H(A1)` mappings internally. `DigestClient` prioritizes
+///     password) -> `H(A1)` mappings internally. `Client` prioritizes
 ///     simplicity instead.
 /// *   There's no support yet for parsing the `Authentication-Info` and
 ///     `Proxy-Authentication-Info` header fields described by [RFC 7616 section
@@ -174,10 +174,10 @@ impl QopSet {
 /// `Digest` scheme. It doesn't prohibit implementing other schemes, but some
 /// cameras meet the specification's requirement and do no more.
 #[derive(Eq, PartialEq)]
-pub struct DigestClient {
+pub struct Client {
     /// Holds unescaped versions of all string fields.
     ///
-    /// Using a single `String` minimizes the size of the `DigestClient`
+    /// Using a single `String` minimizes the size of the `Client`
     /// itself and/or any option/enum it may be wrapped in. It also minimizes
     /// padding bytes after each allocation. The fields as stored as follows:
     ///
@@ -204,7 +204,7 @@ pub struct DigestClient {
     nc: u32,
 }
 
-impl DigestClient {
+impl Client {
     /// Returns a string to be displayed to users so they know which username
     /// and password to use.
     ///
@@ -286,7 +286,7 @@ impl DigestClient {
     }
 
     /// Returns the number of times the server-supplied nonce has been used by
-    /// [`DigestClient::respond`].
+    /// [`Client::respond`].
     #[inline]
     pub fn nonce_count(&self) -> u32 {
         self.nc
@@ -303,7 +303,7 @@ impl DigestClient {
 
     /// Responds using a fixed cnonce **for testing only**.
     ///
-    /// In production code, use [`DigestClient::respond`] instead, which generates a new
+    /// In production code, use [`Client::respond`] instead, which generates a new
     /// random cnonce value.
     #[inline]
     pub fn respond_with_testing_cnonce(
@@ -393,13 +393,13 @@ impl DigestClient {
     }
 }
 
-impl TryFrom<&ChallengeRef<'_>> for DigestClient {
+impl TryFrom<&ChallengeRef<'_>> for Client {
     type Error = String;
 
     fn try_from(value: &ChallengeRef<'_>) -> Result<Self, Self::Error> {
         if !value.scheme.eq_ignore_ascii_case("Digest") {
             return Err(format!(
-                "DigestClientContext doesn't support challenge scheme {:?}",
+                "digest::Client doesn't support challenge scheme {:?}",
                 value.scheme
             ));
         }
@@ -478,7 +478,7 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
         }
         let nonce_start = buf.len();
         nonce.append_unescaped(&mut buf);
-        Ok(DigestClient {
+        Ok(Client {
             buf: buf.into_boxed_str(),
             domain_start: domain_start as u16,
             opaque_start: opaque_start as u16,
@@ -494,9 +494,9 @@ impl TryFrom<&ChallengeRef<'_>> for DigestClient {
     }
 }
 
-impl std::fmt::Debug for DigestClient {
+impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DigestClient")
+        f.debug_struct("Client")
             .field("realm", &self.realm())
             .field("domain", &self.domain())
             .field("opaque", &self.opaque())
@@ -515,7 +515,7 @@ impl std::fmt::Debug for DigestClient {
 /// registry](https://www.iana.org/assignments/http-dig-alg/http-dig-alg.xhtml).
 ///
 /// This doesn't store whether the session variant (`<Algorithm>-sess`) was
-/// requested; see [`DigestClient::session`] for that.
+/// requested; see [`Client::session`] for that.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Algorithm {
@@ -689,7 +689,7 @@ pub(crate) mod tests {
             opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"";
         let challenges = dbg!(crate::parse_challenges(www_authenticate).unwrap());
         assert_eq!(challenges.len(), 2);
-        let ctxs: Result<Vec<_>, _> = challenges.iter().map(DigestClient::try_from).collect();
+        let ctxs: Result<Vec<_>, _> = challenges.iter().map(Client::try_from).collect();
         let mut ctxs = dbg!(ctxs.unwrap());
         assert_eq!(ctxs[1].realm(), "http-auth@example.org");
         assert_eq!(ctxs[1].domain(), "");
@@ -749,7 +749,7 @@ pub(crate) mod tests {
             opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"";
         let challenges = dbg!(crate::parse_challenges(www_authenticate).unwrap());
         assert_eq!(challenges.len(), 1);
-        let ctxs: Result<Vec<_>, _> = challenges.iter().map(DigestClient::try_from).collect();
+        let ctxs: Result<Vec<_>, _> = challenges.iter().map(Client::try_from).collect();
         let mut ctxs = dbg!(ctxs.unwrap());
         assert_eq!(ctxs[0].realm(), "http-auth@example.org");
         assert_eq!(ctxs[0].domain(), "");
@@ -809,7 +809,7 @@ pub(crate) mod tests {
             userhash=true";
         let challenges = dbg!(crate::parse_challenges(www_authenticate).unwrap());
         assert_eq!(challenges.len(), 1);
-        let ctxs: Result<Vec<_>, _> = challenges.iter().map(DigestClient::try_from).collect();
+        let ctxs: Result<Vec<_>, _> = challenges.iter().map(Client::try_from).collect();
         let mut ctxs = dbg!(ctxs.unwrap());
         assert_eq!(ctxs.len(), 1);
         assert_eq!(ctxs[0].realm(), "api@example.org");
@@ -872,7 +872,7 @@ pub(crate) mod tests {
             opaque=\"5ccc069c403ebaf9f0171e9517f40e41\"";
         let challenges = dbg!(crate::parse_challenges(www_authenticate).unwrap());
         assert_eq!(challenges.len(), 1);
-        let ctxs: Result<Vec<_>, _> = challenges.iter().map(DigestClient::try_from).collect();
+        let ctxs: Result<Vec<_>, _> = challenges.iter().map(Client::try_from).collect();
         let mut ctxs = dbg!(ctxs.unwrap());
         assert_eq!(ctxs.len(), 1);
         assert_eq!(ctxs[0].qop.0, Qop::Auth as u8);
@@ -905,8 +905,8 @@ pub(crate) mod tests {
     fn size() {
         // This type should have a niche.
         assert_eq!(
-            dbg!(std::mem::size_of::<DigestClient>()),
-            dbg!(std::mem::size_of::<Option<DigestClient>>()),
+            dbg!(std::mem::size_of::<Client>()),
+            dbg!(std::mem::size_of::<Option<Client>>()),
         )
     }
 
@@ -945,7 +945,7 @@ pub(crate) mod tests {
                  qop=auth-int, response=\"4eed21f254b878bca8ae6a55de409071\", opaque=\"op\"",
             ),
         ] {
-            let mut ctx = DigestClient::try_from(&challenges[0]).unwrap();
+            let mut ctx = Client::try_from(&challenges[0]).unwrap();
             assert_eq!(
                 ctx.respond_with_testing_cnonce(&params, cnonce).unwrap(),
                 expected
@@ -959,7 +959,7 @@ pub(crate) mod tests {
     fn htab_is_quoted() {
         let challenge =
             crate::parse_challenges("Digest realm=\"a\tb\", nonce=\"n\", qop=\"auth\"").unwrap();
-        let mut ctx = DigestClient::try_from(&challenge[0]).unwrap();
+        let mut ctx = Client::try_from(&challenge[0]).unwrap();
         let out = ctx
             .respond_with_testing_cnonce(
                 &crate::PasswordParams {

@@ -26,15 +26,16 @@ Unicode normalization (NFC, RFC 7613).
 
 # Decision outcome
 
-Option 2: parse, then `DigestServer::check_nonce` (built-in stateless check, or
-`DigestResponse::nonce_checked_externally` with a caller's store), then
-`verify(&resp, Request { method, uri, body }, secret)`; only a
-`DigestResponse<NonceChecked>` reaches `verify`. `DigestServer::builder(realm)`
-builds a `Send + Sync` server; `challenges(stale, now)` returns one validated
-`Challenge` per offered algorithm. The secret is `Secret::Ha1(&str)` or
-`Secret::Password { username, password }`. `BasicServer::new(realm)` validates
-the realm; `challenge()`, `BasicCredentials::parse` and `verify_password`
-complete the `Basic` server.
+Option 2: parse, then `digest::Server::check_nonce` (built-in stateless check,
+or `digest::CredentialsRef::nonce_checked_externally` with a caller's store),
+then `verify(&resp, Request { method, uri, body }, secret)`; only a
+`digest::CredentialsRef<NonceChecked>` reaches `verify`.
+`digest::Server::builder(realm)` builds a `Send + Sync` server;
+`challenges(stale, now)` returns one validated `Challenge` per offered
+algorithm. The secret is `Secret::Ha1(&str)` or
+`Secret::Password { username, password }`. `basic::Server::new(realm)`
+validates the realm; `challenge()`, `basic::Credentials::parse` and
+`verify_password` complete the `Basic` server.
 
 The nonce is `hex(issued_at_secs:u64be || salt:[u8; 8] || HMAC-SHA256(key,
 issued_at_secs || salt || realm)[..16])`, keyed by `nonce_key` with lifetime
@@ -60,14 +61,14 @@ highest `nc` per `(nonce, cnonce)` for RFC 7616 §5.5.
 | `verify`: `Secret::Ha1` wrong hex length | `SecretMismatch` |
 | `verify`: username or computed `response` (constant-time) mismatch | `BadCredentials` |
 | `verify`: nonce authentic but expired, everything else valid | `Stale` |
-| `BasicCredentials::parse` (RFC 7617 §2): scheme, token68 base64, `:` split, CTLs, UTF-8 | `Malformed` / `WrongScheme` |
+| `basic::Credentials::parse` (RFC 7617 §2): scheme, token68 base64, `:` split, CTLs, UTF-8 | `Malformed` / `WrongScheme` |
 
-Builders return `ServerError::InvalidConfig`.
+Builders return `server::Error::InvalidConfig`.
 
 # Errors
 
-`ServerError::status()` gives the HTTP status to respond with; re-challenge
-with `stale=true` on `ServerError::Stale`. Failure details go to logs only.
+`server::Error::status()` gives the HTTP status to respond with; re-challenge
+with `stale=true` on `server::Error::Stale`. Failure details go to logs only.
 
 ## Features and compatibility
 
@@ -89,4 +90,4 @@ builds; MSRV stays 1.70. 0.2 changes are in [CHANGELOG](../CHANGELOG.md).
 *   One negative test per validation rule, asserting the error variant.
 *   Client/server round-trips across algorithm × `-sess` × qop × userhash.
 *   `curl` oracle (`tests/curl_oracle.rs`), skipped when curl is absent.
-*   Fuzzing: `parse_credentials` (differential), `DigestResponse::parse`, rendering round-trip.
+*   Fuzzing: `parse_credentials` (differential), `digest::CredentialsRef::parse`, rendering round-trip.

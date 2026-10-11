@@ -13,7 +13,7 @@ mod server;
 
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use self::server::{BasicCredentials, BasicServer};
+pub use self::server::{Credentials, Server};
 
 /// Encodes the given credentials.
 ///
@@ -55,11 +55,11 @@ fn base64_encoded_len(input_len: usize) -> usize {
 /// This implementation always uses `UTF-8`. Thus it doesn't use or store the
 /// `charset` parameter, which the RFC only allows to be set to `UTF-8` anyway.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BasicClient {
+pub struct Client {
     realm: Box<str>,
 }
 
-impl BasicClient {
+impl Client {
     pub fn realm(&self) -> &str {
         &self.realm
     }
@@ -67,20 +67,20 @@ impl BasicClient {
     /// Responds to the challenge with the supplied parameters.
     ///
     /// This is functionally identical to [`encode_credentials`]; no parameters
-    /// of the `BasicClient` are needed to produce the credentials.
+    /// of the `Client` are needed to produce the credentials.
     #[inline]
     pub fn respond(&self, username: &str, password: &str) -> String {
         encode_credentials(username, password)
     }
 }
 
-impl TryFrom<&ChallengeRef<'_>> for BasicClient {
+impl TryFrom<&ChallengeRef<'_>> for Client {
     type Error = String;
 
     fn try_from(value: &ChallengeRef<'_>) -> Result<Self, Self::Error> {
         if !value.scheme.eq_ignore_ascii_case("Basic") {
             return Err(format!(
-                "BasicClient doesn't support challenge scheme {:?}",
+                "basic::Client doesn't support challenge scheme {:?}",
                 value.scheme
             ));
         }
@@ -92,7 +92,7 @@ impl TryFrom<&ChallengeRef<'_>> for BasicClient {
             }
         }
         let realm = realm.ok_or("missing required parameter realm")?;
-        Ok(BasicClient {
+        Ok(Client {
             realm: realm.into_boxed_str(),
         })
     }
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn basic() {
         // Example from https://datatracker.ietf.org/doc/html/rfc7617#section-2
-        let ctx = BasicClient {
+        let ctx = Client {
             realm: "WallyWorld".into(),
         };
         assert_eq!(
@@ -115,7 +115,7 @@ mod tests {
 
         // Example from https://datatracker.ietf.org/doc/html/rfc7617#section-2.1
         // Note that this crate *always* uses UTF-8, not just when the server requests it.
-        let ctx = BasicClient {
+        let ctx = Client {
             realm: "foo".into(),
         };
         assert_eq!(ctx.respond("test", "123\u{A3}"), "Basic dGVzdDoxMjPCow==");

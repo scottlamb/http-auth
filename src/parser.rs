@@ -14,7 +14,7 @@
 
 use std::{fmt::Display, ops::Range};
 
-use crate::{AuthBody, ChallengeRef, CredentialsRef, ParamValue};
+use crate::{AuthBodyRef, ChallengeRef, CredentialsRef, ParamValueRef};
 
 use crate::{char_classes, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 
@@ -41,18 +41,18 @@ macro_rules! trace {
 /// ## Example
 ///
 /// ```rust
-/// use http_auth::{parser::ChallengeParser, AuthBody, ChallengeRef, ParamValue};
+/// use http_auth::{parser::ChallengeParser, AuthBodyRef, ChallengeRef, ParamValueRef};
 /// let challenges = "UnsupportedSchemeA, Basic realm=\"foo\", error realm=\"unclosed";
 /// let mut parser = ChallengeParser::new(challenges);
 /// let c = parser.next().unwrap().unwrap();
 /// assert_eq!(c, ChallengeRef {
 ///     scheme: "UnsupportedSchemeA",
-///     body: AuthBody::Params(vec![]),
+///     body: AuthBodyRef::Params(vec![]),
 /// });
 /// let c = parser.next().unwrap().unwrap();
 /// assert_eq!(c, ChallengeRef {
 ///     scheme: "Basic",
-///     body: AuthBody::Params(vec![("realm", ParamValue::try_from_escaped("foo").unwrap())]),
+///     body: AuthBodyRef::Params(vec![("realm", ParamValueRef::try_from_escaped("foo").unwrap())]),
 /// });
 /// let c = parser.next().unwrap().unwrap_err();
 /// ```
@@ -68,6 +68,7 @@ macro_rules! trace {
 ///     which allows these via `obs-text`, but the meaning is ill-defined in
 ///     the context of RFC 7235.
 /// *   Accepts `token68` challenges ([RFC 9110 section 11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
+#[allow(clippy::module_name_repetitions)] // usually used via the crate root.
 pub struct ChallengeParser<'i> {
     input: &'i str,
     pos: usize,
@@ -346,7 +347,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                                         self.state = State::PreToken {
                                             challenge: Some(ChallengeRef {
                                                 scheme: &self.input[token_pos],
-                                                body: AuthBody::Token68(
+                                                body: AuthBodyRef::Token68(
                                                     &self.input[self.pos + ws..end],
                                                 ),
                                             }),
@@ -424,7 +425,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                         push_param(
                             &mut challenge,
                             &self.input[key_pos],
-                            ParamValue {
+                            ParamValueRef {
                                 escapes: 0,
                                 escaped: &self.input[value_start..self.pos],
                             },
@@ -437,7 +438,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                         push_param(
                             &mut challenge,
                             &self.input[key_pos],
-                            ParamValue {
+                            ParamValueRef {
                                 escapes: 0,
                                 escaped: &self.input[value_start..self.pos],
                             },
@@ -490,7 +491,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                         push_param(
                             &mut challenge,
                             &self.input[key_pos],
-                            ParamValue {
+                            ParamValueRef {
                                 escapes,
                                 escaped: &self.input[value_start..self.pos],
                             },
@@ -582,7 +583,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                 push_param(
                     &mut challenge,
                     &self.input[key_pos],
-                    ParamValue {
+                    ParamValueRef {
                         escapes: 0,
                         escaped: &self.input[value_start..],
                     },
@@ -604,10 +605,10 @@ impl<'i> Iterator for ChallengeParser<'i> {
 
 impl std::iter::FusedIterator for ChallengeParser<'_> {}
 
-fn push_param<'i>(challenge: &mut ChallengeRef<'i>, key: &'i str, value: ParamValue<'i>) {
+fn push_param<'i>(challenge: &mut ChallengeRef<'i>, key: &'i str, value: ParamValueRef<'i>) {
     match &mut challenge.body {
-        AuthBody::Params(p) => p.push((key, value)),
-        AuthBody::Token68(_) => unreachable!(),
+        AuthBodyRef::Params(p) => p.push((key, value)),
+        AuthBodyRef::Token68(_) => unreachable!(),
     }
 }
 
@@ -623,10 +624,10 @@ fn push_param<'i>(challenge: &mut ChallengeRef<'i>, key: &'i str, value: ParamVa
 /// duplicate parameters.
 ///
 /// ```rust
-/// use http_auth::{parse_credentials, AuthBody};
+/// use http_auth::{parse_credentials, AuthBodyRef};
 /// let c = parse_credentials("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
 /// assert_eq!(c.scheme, "Basic");
-/// assert_eq!(c.body, AuthBody::Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="));
+/// assert_eq!(c.body, AuthBodyRef::Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="));
 /// ```
 pub fn parse_credentials(input: &str) -> Result<CredentialsRef<'_>, Error<'_>> {
     let input = input.trim_matches(|c| c == ' ' || c == '\t');
@@ -698,7 +699,7 @@ pub(crate) fn decode_ext_value(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use crate::parse_credentials;
-    use crate::{AuthBody, ChallengeRef, ParamValue};
+    use crate::{AuthBodyRef, ChallengeRef, ParamValueRef};
 
     #[test]
     fn multi_challenge() {
@@ -711,15 +712,15 @@ mod tests {
             &[
                 ChallengeRef {
                     scheme: "Newauth",
-                    body: AuthBody::Params(vec![
-                        ("realm", ParamValue::new(0, "apps")),
-                        ("type", ParamValue::new(0, "1")),
-                        ("title", ParamValue::new(2, r#"Login to \"apps\""#)),
+                    body: AuthBodyRef::Params(vec![
+                        ("realm", ParamValueRef::new(0, "apps")),
+                        ("type", ParamValueRef::new(0, "1")),
+                        ("title", ParamValueRef::new(2, r#"Login to \"apps\""#)),
                     ]),
                 },
                 ChallengeRef {
                     scheme: "Basic",
-                    body: AuthBody::Params(vec![("realm", ParamValue::new(0, "simple"))]),
+                    body: AuthBodyRef::Params(vec![("realm", ParamValueRef::new(0, "simple"))]),
                 },
             ]
         );
@@ -737,7 +738,7 @@ mod tests {
             crate::parse_challenges("Basic abc=").unwrap(),
             vec![ChallengeRef {
                 scheme: "Basic",
-                body: AuthBody::Token68("abc="),
+                body: AuthBodyRef::Token68("abc="),
             }]
         );
         assert_eq!(
@@ -745,11 +746,11 @@ mod tests {
             vec![
                 ChallengeRef {
                     scheme: "Negotiate",
-                    body: AuthBody::Token68("abc"),
+                    body: AuthBodyRef::Token68("abc"),
                 },
                 ChallengeRef {
                     scheme: "Basic",
-                    body: AuthBody::Params(vec![("realm", ParamValue::new(0, "x"))]),
+                    body: AuthBodyRef::Params(vec![("realm", ParamValueRef::new(0, "x"))]),
                 },
             ]
         );
@@ -757,15 +758,15 @@ mod tests {
             crate::parse_challenges("Basic  abc==").unwrap(),
             vec![ChallengeRef {
                 scheme: "Basic",
-                body: AuthBody::Token68("abc=="),
+                body: AuthBodyRef::Token68("abc=="),
             }]
         );
     }
 
     #[test]
     fn credentials() {
-        use AuthBody::{Params, Token68};
-        let cases: &[(&str, AuthBody<'_>)] = &[
+        use AuthBodyRef::{Params, Token68};
+        let cases: &[(&str, AuthBodyRef<'_>)] = &[
             (
                 "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
                 Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="),
@@ -779,23 +780,23 @@ mod tests {
             (
                 r#"Digest username="Mufasa", qop=auth, nc=00000001"#,
                 Params(vec![
-                    ("username", ParamValue::new(0, "Mufasa")),
-                    ("qop", ParamValue::new(0, "auth")),
-                    ("nc", ParamValue::new(0, "00000001")),
+                    ("username", ParamValueRef::new(0, "Mufasa")),
+                    ("qop", ParamValueRef::new(0, "auth")),
+                    ("nc", ParamValueRef::new(0, "00000001")),
                 ]),
             ),
             (
                 r#"Digest  a="x \"y\"",b = c"#,
                 Params(vec![
-                    ("a", ParamValue::new(2, r#"x \"y\""#)),
-                    ("b", ParamValue::new(0, "c")),
+                    ("a", ParamValueRef::new(2, r#"x \"y\""#)),
+                    ("b", ParamValueRef::new(0, "c")),
                 ]),
             ),
             (
                 "\tDigest a=b ,\tc=d \t",
                 Params(vec![
-                    ("a", ParamValue::new(0, "b")),
-                    ("c", ParamValue::new(0, "d")),
+                    ("a", ParamValueRef::new(0, "b")),
+                    ("c", ParamValueRef::new(0, "d")),
                 ]),
             ),
         ];
@@ -828,9 +829,9 @@ mod tests {
         s.push_str("a=b");
         let challenges = crate::parse_challenges(&s).unwrap();
         assert_eq!(challenges.len(), 1);
-        assert!(matches!(&challenges[0].body, AuthBody::Params(p) if p.len() == 1));
+        assert!(matches!(&challenges[0].body, AuthBodyRef::Params(p) if p.len() == 1));
         let c = parse_credentials(&s).unwrap();
-        assert!(matches!(&c.body, AuthBody::Params(p) if p.len() == 1));
+        assert!(matches!(&c.body, AuthBodyRef::Params(p) if p.len() == 1));
         let mut s = String::from("Foo");
         s.push_str(&" ".repeat(200_000));
         s.push('\t');

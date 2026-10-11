@@ -35,7 +35,7 @@ In order:
     nom-based reference implementation.
 3.  **light-weight.** Minimal dependencies; uses Cargo features so callers can
     avoid them when undesired. Simple code that minimizes monomorphization
-    bloat. Small data structures; eg `http_auth::DigestClient` currently weighs
+    bloat. Small data structures; eg `http_auth::digest::Client` currently weighs
     in at 32 bytes plus one allocation for all string fields.
 4.  **complete.** Implements both parsing and responding to challenges.
     (Currently supports the most common `Basic` and `Digest` schemes, on both

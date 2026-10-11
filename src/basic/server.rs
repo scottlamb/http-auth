@@ -9,38 +9,38 @@ use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 
 use crate::render::HeaderWriter;
-use crate::server::{check_realm, parse_scheme, Challenge, ServerError};
-use crate::AuthBody;
+use crate::server::{check_realm, parse_scheme, Challenge, Error};
+use crate::AuthBodyRef;
 
 /// Issues `Basic` challenges.
 ///
 /// ```rust
-/// use http_auth::basic::{BasicCredentials, BasicServer};
-/// let server = BasicServer::new("WallyWorld")?.charset_utf8(true);
+/// use http_auth::basic::{Credentials, Server};
+/// let server = Server::new("WallyWorld")?.charset_utf8(true);
 /// assert_eq!(
 ///     server.challenge().as_str(),
 ///     r#"Basic realm="WallyWorld", charset="UTF-8""#,
 /// );
-/// let creds = BasicCredentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
+/// let creds = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
 /// assert_eq!(creds.username(), "Aladdin");
 /// assert!(creds.verify_password("open sesame"));
-/// # Ok::<(), http_auth::server::ServerError>(())
+/// # Ok::<(), http_auth::server::Error>(())
 /// ```
 ///
 /// `Basic` sends the password in cleartext; use TLS, and store password hashes
 /// ([OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)).
 #[derive(Clone, Debug)]
-pub struct BasicServer {
+pub struct Server {
     realm: Box<str>,
     charset_utf8: bool,
 }
 
-impl BasicServer {
+impl Server {
     /// Creates a server for the given realm.
     ///
-    /// Fails with [`ServerError::InvalidConfig`] if the realm isn't printable
+    /// Fails with [`Error::InvalidConfig`] if the realm isn't printable
     /// ASCII.
-    pub fn new(realm: impl Into<String>) -> Result<Self, ServerError> {
+    pub fn new(realm: impl Into<String>) -> Result<Self, Error> {
         let realm = realm.into();
         check_realm(&realm)?;
         Ok(Self {
@@ -70,12 +70,12 @@ impl BasicServer {
 
 /// Credentials from a `Basic` `Authorization` or `Proxy-Authorization` header.
 #[derive(Clone)]
-pub struct BasicCredentials {
+pub struct Credentials {
     user_pass: String,
     colon: usize,
 }
 
-impl BasicCredentials {
+impl Credentials {
     /// Parses a header value as in [RFC 7617 section
     /// 2](https://datatracker.ietf.org/doc/html/rfc7617#section-2).
     ///
@@ -83,22 +83,21 @@ impl BasicCredentials {
     /// *   `user-pass` is split at the first `:`; a missing colon is an error.
     /// *   Control characters are rejected.
     /// *   The decoded octets must be UTF-8.
-    pub fn parse(header_value: &str) -> Result<Self, ServerError> {
+    pub fn parse(header_value: &str) -> Result<Self, Error> {
         let c = parse_scheme(header_value, "Basic")?;
-        let AuthBody::Token68(encoded) = c.body else {
-            return Err(ServerError::Malformed("expected token68"));
+        let AuthBodyRef::Token68(encoded) = c.body else {
+            return Err(Error::Malformed("expected token68"));
         };
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(encoded)
-            .map_err(|_| ServerError::Malformed("invalid base64"))?;
-        let user_pass =
-            String::from_utf8(decoded).map_err(|_| ServerError::Malformed("not UTF-8"))?;
+            .map_err(|_| Error::Malformed("invalid base64"))?;
+        let user_pass = String::from_utf8(decoded).map_err(|_| Error::Malformed("not UTF-8"))?;
         if user_pass.bytes().any(|b| b < 0x20 || b == 0x7F) {
-            return Err(ServerError::Malformed("control character"));
+            return Err(Error::Malformed("control character"));
         }
         let colon = user_pass
             .find(':')
-            .ok_or(ServerError::Malformed("missing colon"))?;
+            .ok_or(Error::Malformed("missing colon"))?;
         Ok(Self { user_pass, colon })
     }
 
@@ -120,9 +119,9 @@ impl BasicCredentials {
     }
 }
 
-impl std::fmt::Debug for BasicCredentials {
+impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BasicCredentials")
+        f.debug_struct("Credentials")
             .field("username", &self.username())
             .field("password", &"<redacted>")
             .finish()
@@ -136,22 +135,22 @@ mod tests {
     #[test]
     fn rfc7617_examples() {
         // RFC 7617 section 2.
-        let c = BasicCredentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
+        let c = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
         assert_eq!(c.username(), "Aladdin");
         assert_eq!(c.password(), "open sesame");
         assert!(c.verify_password("open sesame"));
         assert!(!c.verify_password("open sesame!"));
         // RFC 7617 section 2.1: UTF-8 user-pass "test:123£".
-        let c = BasicCredentials::parse("Basic dGVzdDoxMjPCow==").unwrap();
+        let c = Credentials::parse("Basic dGVzdDoxMjPCow==").unwrap();
         assert_eq!((c.username(), c.password()), ("test", "123\u{a3}"));
         // Surrounding OWS and lowercase scheme.
-        let c = BasicCredentials::parse("  basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==\t").unwrap();
+        let c = Credentials::parse("  basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==\t").unwrap();
         assert_eq!(c.username(), "Aladdin");
         // Text after the first colon is part of the password (base64 of "user:pa:ss").
-        let c = BasicCredentials::parse("Basic dXNlcjpwYTpzcw==").unwrap();
+        let c = Credentials::parse("Basic dXNlcjpwYTpzcw==").unwrap();
         assert_eq!((c.username(), c.password()), ("user", "pa:ss"));
         // Empty user-id and password (base64 of ":").
-        let c = BasicCredentials::parse("Basic Og==").unwrap();
+        let c = Credentials::parse("Basic Og==").unwrap();
         assert_eq!((c.username(), c.password()), ("", ""));
         // Debug redacts the password.
         let d = format!("{:?}", c);
@@ -160,8 +159,8 @@ mod tests {
 
     #[test]
     fn parse_errors() {
-        use ServerError::{Malformed, WrongScheme};
-        let cases: &[(&str, ServerError)] = &[
+        use Error::{Malformed, WrongScheme};
+        let cases: &[(&str, Error)] = &[
             ("Digest username=\"x\"", WrongScheme),
             (
                 "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ",
@@ -175,7 +174,7 @@ mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(
-                BasicCredentials::parse(input).unwrap_err(),
+                Credentials::parse(input).unwrap_err(),
                 *expected,
                 "{:?}",
                 input
@@ -185,20 +184,17 @@ mod tests {
 
     #[test]
     fn challenge() {
-        let s = BasicServer::new("WallyWorld").unwrap();
+        let s = Server::new("WallyWorld").unwrap();
         assert_eq!(s.challenge().as_str(), r#"Basic realm="WallyWorld""#);
-        let s = BasicServer::new(r#"a "b""#).unwrap().charset_utf8(true);
+        let s = Server::new(r#"a "b""#).unwrap().charset_utf8(true);
         assert_eq!(
             s.challenge().as_str(),
             r#"Basic realm="a \"b\"", charset="UTF-8""#
         );
         assert!(matches!(
-            BasicServer::new("caf\u{e9}"),
-            Err(ServerError::InvalidConfig(_))
+            Server::new("caf\u{e9}"),
+            Err(Error::InvalidConfig(_))
         ));
-        assert!(matches!(
-            BasicServer::new("a\nb"),
-            Err(ServerError::InvalidConfig(_))
-        ));
+        assert!(matches!(Server::new("a\nb"), Err(Error::InvalidConfig(_))));
     }
 }
