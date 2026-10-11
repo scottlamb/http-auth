@@ -68,7 +68,8 @@ pub enum Error {
     /// The response uses `qop=auth-int` but no body was supplied to verify.
     BodyRequired,
 
-    /// The supplied secret doesn't fit the response's algorithm.
+    /// The supplied [`crate::digest::Secret::Ha1`] isn't lowercase hex of
+    /// the response's algorithm's length: a caller bug.
     SecretMismatch,
 
     /// Wrong username or password.
@@ -95,9 +96,8 @@ impl Error {
             | Error::UnofferedQop
             | Error::WrongOpaque
             | Error::UnofferedUserhash
-            | Error::SecretMismatch
             | Error::BadCredentials => 401,
-            Error::BodyRequired | Error::InvalidConfig(_) => 500,
+            Error::BodyRequired | Error::SecretMismatch | Error::InvalidConfig(_) => 500,
         }
     }
 }
@@ -150,6 +150,17 @@ pub(crate) fn check_realm(realm: &str) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use super::Error;
+
+    #[test]
+    fn status() {
+        assert_eq!(Error::Malformed("x").status(), 400);
+        assert_eq!(Error::BadCredentials.status(), 401);
+        assert_eq!(Error::Stale.status(), 401);
+        assert_eq!(Error::SecretMismatch.status(), 500);
+        assert_eq!(Error::BodyRequired.status(), 500);
+    }
+
     #[cfg(feature = "http10")]
     #[test]
     fn into_http_header_value() {

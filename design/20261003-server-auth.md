@@ -57,8 +57,8 @@ highest `nc` per `(nonce, cnonce)` for RFC 7616 §5.5.
 | `verify`: `algorithm` (default `MD5`) and `-sess` not offered; `qop` not offered | `UnofferedAlgorithm` / `UnofferedQop` |
 | `verify`: `userhash=true` not offered | `UnofferedUserhash` |
 | `verify`: `uri` differs from the request-target (RFC 7616 §3.4.6) | `UriMismatch` (400) |
-| `verify`: `qop=auth-int` without `body: Some(_)` | `BodyRequired` |
-| `verify`: `Secret::Ha1` wrong hex length | `SecretMismatch` |
+| `verify`: `qop=auth-int` without `body: Some(_)` | `BodyRequired` (500) |
+| `verify`: `Secret::Ha1` wrong hex length | `SecretMismatch` (500) |
 | `verify`: username or computed `response` (constant-time) mismatch | `BadCredentials` |
 | `verify`: nonce authentic but expired, everything else valid | `Stale` |
 | `basic::Credentials::parse` (RFC 7617 §2): scheme, token68 base64, `:` split, CTLs, UTF-8 | `Malformed` / `WrongScheme` |
