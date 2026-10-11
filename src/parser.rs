@@ -98,25 +98,64 @@ impl<'i> ChallengeParser<'i> {
     }
 }
 
-/// Describes a parse error and where in the input it occurs.
+/// Describes a parse error, what was being parsed, and where in the input it
+/// occurs.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Error<'i> {
+    context: Context,
     input: &'i str,
     pos: usize,
     error: &'static str,
 }
 
+/// What was being parsed when an [`Error`] occurred.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Context {
+    /// A `WWW-Authenticate` or `Proxy-Authenticate` challenge list.
+    Challenges,
+
+    /// An `Authorization` or `Proxy-Authorization` value.
+    Credentials,
+
+    /// An auth-scheme, as given to `try_new`.
+    Scheme,
+
+    /// An auth-param name, as given to `try_new`.
+    ParamName,
+
+    /// A `token68`, as given to `try_new`.
+    Token68,
+
+    /// An escaped quoted-string value, as given to
+    /// [`crate::ParamValueRef::try_from_escaped`].
+    ParamValue,
+}
+
+impl Context {
+    fn as_str(self) -> &'static str {
+        match self {
+            Context::Challenges => "challenge list",
+            Context::Credentials => "credentials",
+            Context::Scheme => "auth-scheme",
+            Context::ParamName => "auth-param name",
+            Context::Token68 => "token68",
+            Context::ParamValue => "quoted-string value",
+        }
+    }
+}
+
 impl<'i> Error<'i> {
-    pub(crate) fn new(input: &'i str, pos: usize, error: &'static str) -> Self {
-        Self { input, pos, error }
+    pub(crate) fn new(context: Context, input: &'i str, pos: usize, error: &'static str) -> Self {
+        Self {
+            context,
+            input,
+            pos,
+            error,
+        }
     }
 
     fn invalid_byte(input: &'i str, pos: usize) -> Self {
-        Self {
-            input,
-            pos,
-            error: "invalid byte",
-        }
+        Self::new(Context::Challenges, input, pos, "invalid byte")
     }
 }
 
@@ -124,7 +163,8 @@ impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} at byte {}: {:?}",
+            "invalid {}: {} at byte {}: {:?}",
+            self.context.as_str(),
             self.error,
             self.pos,
             format_args!(
@@ -334,6 +374,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                                 }
                                 None => {
                                     return Some(Err(Error {
+                                        context: Context::Challenges,
                                         input: self.input,
                                         pos: self.pos,
                                         error: "= without existing challenge",
@@ -528,6 +569,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                 trace!("eof, PreToken({:?})", next);
                 if (next.0 & P_EOF) == 0 {
                     return Some(Err(Error {
+                        context: Context::Challenges,
                         input: self.input,
                         pos: self.input.len(),
                         error: "unexpected EOF",
@@ -545,6 +587,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                 trace!("eof, Token({:?})", cur);
                 if (cur.0 & P_SCHEME) == 0 {
                     return Some(Err(Error {
+                        context: Context::Challenges,
                         input: self.input,
                         pos: self.input.len(),
                         error: "unexpected EOF expecting =",
@@ -554,6 +597,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                     && self.input[token_pos.end..].bytes().any(|b| b != b' ')
                 {
                     return Some(Err(Error {
+                        context: Context::Challenges,
                         input: self.input,
                         pos: self.input.len(),
                         error: "EOF after whitespace",
@@ -572,6 +616,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
             State::PostEquals { .. } => {
                 trace!("eof, PostEquals");
                 return Some(Err(Error {
+                    context: Context::Challenges,
                     input: self.input,
                     pos: self.input.len(),
                     error: "unexpected EOF expecting param value",
@@ -596,6 +641,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
             State::ParamQuotedValue { .. } => {
                 trace!("eof, ParamQuotedValue");
                 return Some(Err(Error {
+                    context: Context::Challenges,
                     input: self.input,
                     pos: self.input.len(),
                     error: "unexpected EOF in quoted param value",
@@ -633,10 +679,18 @@ fn push_param<'i>(challenge: &mut ChallengeRef<'i>, key: &'i str, value: ParamVa
 /// assert_eq!(c.body(), &AuthBodyRef::Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="));
 /// ```
 pub fn parse_credentials(input: &str) -> Result<CredentialsRef<'_>, Error<'_>> {
-    let input = input.trim_matches(|c| c == ' ' || c == '\t');
-    let c = ChallengeParser::single(input)
+    let start_trimmed = input.trim_start_matches([' ', '\t']);
+    let offset = input.len() - start_trimmed.len();
+    let c = ChallengeParser::single(start_trimmed.trim_end_matches([' ', '\t']))
         .next()
-        .expect("single mode yields one item")?;
+        .expect("single mode yields one item")
+        .map_err(|e| Error {
+            // Report the position within the untrimmed input.
+            context: Context::Credentials,
+            input,
+            pos: offset + e.pos,
+            error: e.error,
+        })?;
     Ok(CredentialsRef {
         scheme: c.scheme,
         body: c.body,
@@ -646,28 +700,28 @@ pub fn parse_credentials(input: &str) -> Result<CredentialsRef<'_>, Error<'_>> {
 /// Checks `scheme` and `body` for [`ChallengeRef::try_new`] and
 /// [`CredentialsRef::try_new`].
 pub(crate) fn validate<'i>(scheme: &'i str, body: &AuthBodyRef<'i>) -> Result<(), Error<'i>> {
-    check_token(scheme, "invalid auth-scheme")?;
+    check_token(scheme, Context::Scheme)?;
     match body {
         AuthBodyRef::Token68(t) => {
             let chars = t.trim_start_matches(|c: char| {
                 c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '+' | '/')
             });
             let rest = chars.trim_start_matches('=');
+            if t.is_empty() {
+                return Err(Error::new(Context::Token68, t, 0, "empty"));
+            }
             if chars.len() == t.len() || !rest.is_empty() {
-                return Err(Error {
-                    input: t,
-                    pos: if chars.len() == t.len() {
-                        0
-                    } else {
-                        t.len() - rest.len()
-                    },
-                    error: "invalid token68",
-                });
+                let pos = if chars.len() == t.len() {
+                    0
+                } else {
+                    t.len() - rest.len()
+                };
+                return Err(Error::new(Context::Token68, t, pos, "invalid byte"));
             }
         }
         AuthBodyRef::Params(params) => {
             for (k, _) in params {
-                check_token(k, "invalid auth-param name")?;
+                check_token(k, Context::ParamName)?;
             }
         }
     }
@@ -675,18 +729,10 @@ pub(crate) fn validate<'i>(scheme: &'i str, body: &AuthBodyRef<'i>) -> Result<()
 }
 
 /// Checks that `s` is a non-empty token, else describes the first bad byte.
-fn check_token<'i>(s: &'i str, error: &'static str) -> Result<(), Error<'i>> {
+fn check_token(s: &str, context: Context) -> Result<(), Error<'_>> {
     match s.bytes().position(|b| (char_classes(b) & C_TCHAR) == 0) {
-        Some(pos) => Err(Error {
-            input: s,
-            pos,
-            error,
-        }),
-        None if s.is_empty() => Err(Error {
-            input: s,
-            pos: 0,
-            error,
-        }),
+        Some(pos) => Err(Error::new(context, s, pos, "invalid byte")),
+        None if s.is_empty() => Err(Error::new(context, s, 0, "empty")),
         None => Ok(()),
     }
 }
@@ -749,6 +795,7 @@ pub(crate) fn decode_ext_value(s: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::Context;
     use crate::parse_credentials;
     use crate::{AuthBodyRef, ChallengeRef, ParamValueRef};
 
@@ -887,26 +934,69 @@ mod tests {
             ChallengeRef::try_new(scheme, body.clone()).unwrap();
             CredentialsRef::try_new(scheme, body).unwrap();
         }
-        for (scheme, body, error, pos) in [
-            ("", Params(vec![]), "invalid auth-scheme", 0),
-            ("Ba sic", Params(vec![]), "invalid auth-scheme", 2),
-            ("Basic", Params(vec![("", v)]), "invalid auth-param name", 0),
+        for (scheme, body, context, error, pos) in [
+            ("", Params(vec![]), Context::Scheme, "empty", 0),
+            ("Ba sic", Params(vec![]), Context::Scheme, "invalid byte", 2),
+            (
+                "Basic",
+                Params(vec![("", v)]),
+                Context::ParamName,
+                "empty",
+                0,
+            ),
             (
                 "Basic",
                 Params(vec![("re\"alm", v)]),
-                "invalid auth-param name",
+                Context::ParamName,
+                "invalid byte",
                 2,
             ),
-            ("Basic", Token68(""), "invalid token68", 0),
-            ("Basic", Token68("=abc"), "invalid token68", 0),
-            ("Basic", Token68("ab=c"), "invalid token68", 3),
-            ("Basic", Token68("a b"), "invalid token68", 1),
+            ("Basic", Token68(""), Context::Token68, "empty", 0),
+            (
+                "Basic",
+                Token68("=abc"),
+                Context::Token68,
+                "invalid byte",
+                0,
+            ),
+            (
+                "Basic",
+                Token68("ab=c"),
+                Context::Token68,
+                "invalid byte",
+                3,
+            ),
+            ("Basic", Token68("a b"), Context::Token68, "invalid byte", 1),
         ] {
+            let want = (context, error, pos);
             let e = ChallengeRef::try_new(scheme, body.clone()).unwrap_err();
-            assert_eq!((e.error, e.pos), (error, pos), "{:?} {:?}", scheme, body);
+            assert_eq!((e.context, e.error, e.pos), want, "{:?} {:?}", scheme, body);
             let e = CredentialsRef::try_new(scheme, body).unwrap_err();
-            assert_eq!((e.error, e.pos), (error, pos));
+            assert_eq!((e.context, e.error, e.pos), want);
         }
+    }
+
+    /// Credentials errors report positions in the untrimmed input.
+    #[test]
+    fn credentials_error_untrimmed() {
+        let input = "  Basic a=\"b";
+        let e = parse_credentials(input).unwrap_err();
+        assert_eq!(e.context, Context::Credentials);
+        assert_eq!(e.input, input);
+        assert_eq!(&input[e.pos..], "", "{}", e);
+        let e = parse_credentials(" \tBa\x01sic abc").unwrap_err();
+        assert_eq!(e.pos, 4, "{}", e);
+        assert!(e.to_string().starts_with("invalid credentials: "), "{}", e);
+    }
+
+    #[test]
+    fn challenges_error_context() {
+        let e = crate::parse_challenges("Basic realm=\"x").unwrap_err();
+        assert!(
+            e.to_string().starts_with("invalid challenge list: "),
+            "{}",
+            e
+        );
     }
 
     #[test]

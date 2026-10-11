@@ -785,16 +785,27 @@ impl<'i> ParamValueRef<'i> {
             let slash = memchr::memchr(b'\\', &escaped.as_bytes()[pos..]).map(|off| pos + off);
             for i in pos..slash.unwrap_or(escaped.len()) {
                 if (char_classes(escaped.as_bytes()[i]) & C_QDTEXT) == 0 {
-                    return Err(parser::Error::new(escaped, i, "non-qdtext"));
+                    return Err(parser::Error::new(
+                        parser::Context::ParamValue,
+                        escaped,
+                        i,
+                        "non-qdtext",
+                    ));
                 }
             }
             if let Some(slash) = slash {
                 escapes += 1;
                 if escaped.len() <= slash + 1 {
-                    return Err(parser::Error::new(escaped, slash, "incomplete quoted-pair"));
+                    return Err(parser::Error::new(
+                        parser::Context::ParamValue,
+                        escaped,
+                        slash,
+                        "incomplete quoted-pair",
+                    ));
                 }
                 if (char_classes(escaped.as_bytes()[slash + 1]) & C_ESCAPABLE) == 0 {
                     return Err(parser::Error::new(
+                        parser::Context::ParamValue,
                         escaped,
                         slash + 1,
                         "invalid quoted-pair",
@@ -921,10 +932,16 @@ mod tests {
             2
         );
         for (input, expected) in [
-            ("\\", "incomplete quoted-pair at byte 0"),
-            ("a\"", "non-qdtext at byte 1"),
-            ("\n", "non-qdtext at byte 0"),
-            ("\\\n", "invalid quoted-pair at byte 1"),
+            (
+                "\\",
+                "invalid quoted-string value: incomplete quoted-pair at byte 0",
+            ),
+            ("a\"", "invalid quoted-string value: non-qdtext at byte 1"),
+            ("\n", "invalid quoted-string value: non-qdtext at byte 0"),
+            (
+                "\\\n",
+                "invalid quoted-string value: invalid quoted-pair at byte 1",
+            ),
         ] {
             let e = ParamValueRef::try_from_escaped(input)
                 .unwrap_err()

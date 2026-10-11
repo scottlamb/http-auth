@@ -46,6 +46,9 @@
 *   fix: `qop=auth-int` hashes `H(entity-body)`, not the raw body.
 *   algorithm names in challenges are now matched case-insensitively.
 *   the client rejects a repeated `stale` or `algorithm` in a challenge.
+*   `parser::Error`'s message says what was being parsed (a challenge list,
+    credentials, or a field given to `try_new` / `try_from_escaped`).
+    `parse_credentials` errors report positions within the untrimmed input.
 
 ## `v0.1.10` (2024-08-31)
 
