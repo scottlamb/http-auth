@@ -211,8 +211,8 @@ impl Client {
     /// This string should contain at least the name of
     /// the host performing the authentication and might additionally
     /// indicate the collection of users who might have access.  An
-    /// example is `registered_users@example.com`.  (See [Section 2.2 of
-    /// RFC 7235](https://datatracker.ietf.org/doc/html/rfc7235#section-2.2) for
+    /// example is `registered_users@example.com`.  (See [Section 11.5 of
+    /// RFC 9110](https://datatracker.ietf.org/doc/html/rfc9110#section-11.5) for
     /// more details.)
     #[inline]
     pub fn realm(&self) -> &str {

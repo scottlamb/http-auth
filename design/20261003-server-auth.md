@@ -17,7 +17,7 @@ in rendered headers, constant-time comparisons); no I/O in the crate.
 
 Non-goals: server-side RFC 2069 (qop-less) responses; `Authentication-Info` /
 `rspauth` / `nextnonce` (RFC 7616 §3.5); built-in stateful replay tracking;
-Unicode normalization (NFC, RFC 7613).
+Unicode normalization (NFC, RFC 8265).
 
 # Considered options
 

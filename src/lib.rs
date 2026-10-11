@@ -6,8 +6,8 @@
 //! As described in the following documents and specifications:
 //!
 //! *   [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication).
-//! *   [RFC 7235](https://datatracker.ietf.org/doc/html/rfc7235):
-//!     Hypertext Transfer Protocol (HTTP/1.1): Authentication.
+//! *   [RFC 9110 section 11](https://datatracker.ietf.org/doc/html/rfc9110#section-11):
+//!     HTTP Semantics: HTTP Authentication.
 //! *   [RFC 7617](https://datatracker.ietf.org/doc/html/rfc7617):
 //!     The 'Basic' HTTP Authentication Scheme
 //! *   [RFC 7616](https://datatracker.ietf.org/doc/html/rfc7616):
@@ -269,8 +269,8 @@ impl std::fmt::Debug for ParamsPrinter<'_> {
 /// a `PasswordClient` from an iterator over multiple `WWW-Authenticate`
 /// headers. You can feed each to [`PasswordClientBuilder::with`].
 ///
-/// Prefers `Digest` over `Basic`, consistent with the [RFC 7235 section
-/// 2.1](https://datatracker.ietf.org/doc/html/rfc7235#section-2.1) advice
+/// Prefers `Digest` over `Basic`, consistent with the [RFC 9110 section
+/// 11.4](https://datatracker.ietf.org/doc/html/rfc9110#section-11.4) advice
 /// for a user-agent to pick the most secure auth-scheme it understands.
 ///
 /// When there are multiple `Digest` challenges, currently uses the first,

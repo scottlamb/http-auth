@@ -3,8 +3,7 @@
 
 //! Builds and offers lookup on a table of byte values to the character
 //! classes the respective bytes are part of. Most classes are referenced from
-//! [RFC 7235 Appendix B: Imported ABNF](https://datatracker.ietf.org/doc/html/rfc7235#appendix-B)
-//! or [RFC 7235 Appendix C: Collected ABNF](https://datatracker.ietf.org/doc/html/rfc7235#appendix-C).
+//! [RFC 9110 Appendix A: Collected ABNF](https://datatracker.ietf.org/doc/html/rfc9110#appendix-A).
 
 pub(crate) const C_TCHAR: u8 = 1;
 pub(crate) const C_QDTEXT: u8 = 2;
@@ -48,7 +47,7 @@ const fn build_table() -> [u8; 128] {
 }
 
 /// Returns if the byte is a `tchar` as defined in
-/// [RFC 7230 section 3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6).
+/// [RFC 9110 section 5.6.2](https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.2).
 #[rustfmt::skip]
 const fn is_tchar(b: u8) -> bool {
     // tchar          = "!" / "#" / "$" / "%" / "&" / "'" / "*"
@@ -62,11 +61,11 @@ const fn is_tchar(b: u8) -> bool {
 }
 
 /// Returns true if the byte is a valid `qdtext` (excluding `obs-text`), as defined in
-/// [RFC 7230 section 3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6).
+/// [RFC 9110 section 5.6.4](https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.4).
 ///
 /// ```text
 /// quoted-string  = DQUOTE *( qdtext / quoted-pair ) DQUOTE
-/// qdtext         = HTAB / SP /%x21 / %x23-5B / %x5D-7E / obs-text
+/// qdtext         = HTAB / SP / %x21 / %x23-5B / %x5D-7E / obs-text
 /// obs-text       = %x80-FF
 /// quoted-pair    = "\" ( HTAB / SP / VCHAR / obs-text )
 /// VCHAR          =  %x21-7E
@@ -77,13 +76,13 @@ const fn is_qdtext(b: u8) -> bool {
 }
 
 /// Returns true if the byte is a valid end of a `quoted-pair`, as defined in
-/// [RFC 7230 section 3.2.6](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6).
+/// [RFC 9110 section 5.6.4](https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.4).
 const fn is_escapable(b: u8) -> bool {
     matches!(b, b'\t' | b' ' | 0x21..=0x7E | 0x80..=0xFF)
 }
 
 /// Returns true if the byte is a valid `attr-char` as defined in
-/// [RFC 5987 section 3.2.1](https://datatracker.ietf.org/doc/html/rfc5987#section-3.2.1).
+/// [RFC 8187 section 3.2.1](https://datatracker.ietf.org/doc/html/rfc8187#section-3.2.1).
 ///
 /// ```text
 ///  attr-char     = ALPHA / DIGIT
@@ -99,8 +98,8 @@ const fn is_attr(b: u8) -> bool {
         | b'^' | b'_' | b'`' | b'|' | b'~')
 }
 
-/// Returns true if the byte is valid optional whitespace as in [RFC 7230 section
-/// 3.2.3](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.3).
+/// Returns true if the byte is valid optional whitespace as in [RFC 9110 section
+/// 5.6.3](https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.3).
 ///
 /// ```text
 ///      OWS            = *( SP / HTAB )

@@ -1,7 +1,7 @@
 // Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Parses as in [RFC 7235](https://datatracker.ietf.org/doc/html/rfc7235).
+//! Parses as in [RFC 9110 section 11](https://datatracker.ietf.org/doc/html/rfc9110#section-11).
 //!
 //! Most callers don't need to directly parse; see [`crate::PasswordClient`] instead.
 
@@ -23,9 +23,9 @@ macro_rules! trace {
     ($($arg:tt)+) => (#[cfg(feature = "trace")] log::trace!($($arg)+))
 }
 
-/// Parses a list of challenges as in [RFC
-/// 7235](https://datatracker.ietf.org/doc/html/rfc7235) `Proxy-Authenticate`
-/// or `WWW-Authenticate` header values.
+/// Parses a list of challenges as in [RFC 9110
+/// section 11](https://datatracker.ietf.org/doc/html/rfc9110#section-11)
+/// `Proxy-Authenticate` or `WWW-Authenticate` header values.
 ///
 /// Most callers don't need to directly parse; see [`crate::PasswordClient`] instead.
 ///
@@ -798,13 +798,17 @@ mod tests {
 
     #[test]
     fn multi_challenge() {
-        // https://datatracker.ietf.org/doc/html/rfc7235#section-4.1
+        // https://datatracker.ietf.org/doc/html/rfc9110#section-11.6.1
         let input =
-            r#"Newauth realm="apps", type=1, title="Login to \"apps\"", Basic realm="simple""#;
+            r#"Basic realm="simple", Newauth realm="apps", type=1, title="Login to \"apps\"""#;
         let challenges = crate::parse_challenges(input).unwrap();
         assert_eq!(
             &challenges[..],
             &[
+                ChallengeRef {
+                    scheme: "Basic",
+                    body: AuthBodyRef::Params(vec![("realm", ParamValueRef::new(0, "simple"))]),
+                },
                 ChallengeRef {
                     scheme: "Newauth",
                     body: AuthBodyRef::Params(vec![
@@ -812,10 +816,6 @@ mod tests {
                         ("type", ParamValueRef::new(0, "1")),
                         ("title", ParamValueRef::new(2, r#"Login to \"apps\""#)),
                     ]),
-                },
-                ChallengeRef {
-                    scheme: "Basic",
-                    body: AuthBodyRef::Params(vec![("realm", ParamValueRef::new(0, "simple"))]),
                 },
             ]
         );
