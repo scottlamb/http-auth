@@ -6,7 +6,7 @@
 
 use std::convert::TryFrom;
 
-use crate::ChallengeRef;
+use crate::{ChallengeRef, ClientError};
 
 #[cfg(feature = "server")]
 mod server;
@@ -75,23 +75,26 @@ impl Client {
 }
 
 impl TryFrom<&ChallengeRef<'_>> for Client {
-    type Error = String;
+    type Error = ClientError;
 
     fn try_from(value: &ChallengeRef<'_>) -> Result<Self, Self::Error> {
         if !value.scheme.eq_ignore_ascii_case("Basic") {
-            return Err(format!(
+            return Err(ClientError::new(format!(
                 "basic::Client doesn't support challenge scheme {:?}",
                 value.scheme
-            ));
+            )));
         }
-        let params = value.body.params().ok_or("expected auth-params")?;
+        let params = value
+            .body
+            .params()
+            .ok_or(ClientError::new("expected auth-params"))?;
         let mut realm = None;
         for (k, v) in params {
             if k.eq_ignore_ascii_case("realm") {
                 realm = Some(v.to_unescaped().into_owned());
             }
         }
-        let realm = realm.ok_or("missing required parameter realm")?;
+        let realm = realm.ok_or(ClientError::new("missing required parameter realm"))?;
         Ok(Client {
             realm: realm.into_boxed_str(),
         })

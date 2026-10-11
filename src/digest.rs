@@ -9,7 +9,7 @@ use std::{convert::TryFrom, io::Write as _};
 use digest::Digest;
 
 use crate::render::{is_quotable, HeaderWriter};
-use crate::{ChallengeRef, PasswordParams};
+use crate::{ChallengeRef, ClientError, PasswordParams};
 
 #[cfg(feature = "server")]
 mod nonce;
@@ -297,7 +297,7 @@ impl Client {
     /// The caller should use the returned string as an `Authorization` or
     /// `Proxy-Authorization` header value.
     #[inline]
-    pub fn respond(&mut self, p: &PasswordParams) -> Result<String, String> {
+    pub fn respond(&mut self, p: &PasswordParams) -> Result<String, ClientError> {
         self.respond_inner(p, &new_random_cnonce())
     }
 
@@ -310,7 +310,7 @@ impl Client {
         &mut self,
         p: &PasswordParams,
         cnonce: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, ClientError> {
         self.respond_inner(p, cnonce)
     }
 
@@ -319,7 +319,7 @@ impl Client {
     /// We don't simply implement this as `respond_with_testing_cnonce` and have
     /// `respond` delegate to that method because it'd be confusing/alarming if
     /// that method name ever shows up in production stack traces.
-    fn respond_inner(&mut self, p: &PasswordParams, cnonce: &str) -> Result<String, String> {
+    fn respond_inner(&mut self, p: &PasswordParams, cnonce: &str) -> Result<String, ClientError> {
         let realm = self.realm();
         let ha1 = self.algorithm.ha1(p.username, realm, p.password);
         let h_a1 = h_a1(self.algorithm, self.session, &ha1, self.nonce(), cnonce);
@@ -331,11 +331,14 @@ impl Client {
         } else if self.qop.contains(Qop::Auth) {
             Qop::Auth
         } else {
-            return Err("no supported/available qop".into());
+            return Err(ClientError::new("no supported/available qop"));
         };
         let h_a2 = h_a2(self.algorithm, qop, p.method, p.uri, p.body.unwrap_or(&[]));
 
-        let nc = self.nc.checked_add(1).ok_or("nonce count exhausted")?;
+        let nc = self
+            .nc
+            .checked_add(1)
+            .ok_or(ClientError::new("nonce count exhausted"))?;
         let mut hex_nc = [0u8; 8];
         let _ = write!(&mut hex_nc[..], "{:08x}", nc);
         let str_hex_nc = match std::str::from_utf8(&hex_nc[..]) {
@@ -360,7 +363,7 @@ impl Client {
 
         for (k, v) in [("uri", p.uri), ("cnonce", cnonce)] {
             if !is_quotable(v) {
-                return Err(format!("invalid {} value {:?}", k, v));
+                return Err(ClientError::new(format!("invalid {} value {:?}", k, v)));
             }
         }
         let mut w = HeaderWriter::new("Digest");
@@ -394,16 +397,19 @@ impl Client {
 }
 
 impl TryFrom<&ChallengeRef<'_>> for Client {
-    type Error = String;
+    type Error = ClientError;
 
     fn try_from(value: &ChallengeRef<'_>) -> Result<Self, Self::Error> {
         if !value.scheme.eq_ignore_ascii_case("Digest") {
-            return Err(format!(
+            return Err(ClientError::new(format!(
                 "digest::Client doesn't support challenge scheme {:?}",
                 value.scheme
-            ));
+            )));
         }
-        let params = value.body.params().ok_or("expected auth-params")?;
+        let params = value
+            .body
+            .params()
+            .ok_or(ClientError::new("expected auth-params"))?;
         // https://datatracker.ietf.org/doc/html/rfc7616#section-3.3
         let [realm, domain, nonce, opaque, stale, algorithm, qop_str, userhash_str] =
             crate::find_params(
@@ -419,9 +425,9 @@ impl TryFrom<&ChallengeRef<'_>> for Client {
                     "userhash",
                 ],
             )
-            .map_err(|k| format!("duplicate parameter {:?}", k))?;
-        let realm = realm.ok_or("missing required parameter realm")?;
-        let nonce = nonce.ok_or("missing required parameter nonce")?;
+            .map_err(|k| ClientError::new(format!("duplicate parameter {:?}", k)))?;
+        let realm = realm.ok_or(ClientError::new("missing required parameter realm"))?;
+        let nonce = nonce.ok_or(ClientError::new("missing required parameter nonce"))?;
         let buf_len = [Some(realm), domain, opaque, Some(nonce)]
             .iter()
             .flatten()
@@ -429,16 +435,16 @@ impl TryFrom<&ChallengeRef<'_>> for Client {
             .sum::<usize>();
         if buf_len > u16::MAX as usize {
             // Incredibly unlikely, but just for completeness.
-            return Err(format!(
+            return Err(ClientError::new(format!(
                 "Unescaped parameters' length {} exceeds u16::MAX!",
                 buf_len
-            ));
+            )));
         }
 
         // RFC 7616 section 3.3: `stale` and `algorithm` are never quoted.
         let stale = stale.is_some_and(|v| v.escaped.eq_ignore_ascii_case("true"));
         let algorithm_and_session = match algorithm {
-            Some(v) => Algorithm::parse(v.escaped)?,
+            Some(v) => Algorithm::parse(v.escaped).map_err(ClientError::new)?,
             None => (Algorithm::Md5, false),
         };
 
@@ -452,7 +458,10 @@ impl TryFrom<&ChallengeRef<'_>> for Client {
                 }
             }
             if qop.is_empty() {
-                return Err(format!("no supported qop in {:?}", qop_val));
+                return Err(ClientError::new(format!(
+                    "no supported qop in {:?}",
+                    qop_val
+                )));
             }
             false
         } else {

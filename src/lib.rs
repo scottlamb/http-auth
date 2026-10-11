@@ -77,6 +77,7 @@ assert!(matches!(pw_client, http_auth::PasswordClient::Basic(_)));
 // e.g. `basic::Client`, not `basic::BasicClient`.
 #![warn(clippy::module_name_repetitions)]
 
+use std::borrow::Cow;
 use std::convert::TryFrom;
 
 pub mod parser;
@@ -309,7 +310,7 @@ pub struct PasswordClientBuilder(
     /// *   `Some(Ok(_))` if there is a suitable client.
     /// *   `Some(Err(_))` if there is no suitable client and has been a parse error.
     /// *   `None` otherwise.
-    Option<Result<PasswordClient, String>>,
+    Option<Result<PasswordClient, ClientError>>,
 );
 
 /// Challenge(s) which can be fed to [`PasswordClientBuilder::with`].
@@ -362,7 +363,10 @@ impl sealed::Sealed for &ChallengeRef<'_> {
         }
 
         if builder.0.is_none() {
-            builder.0 = Some(Err(format!("Unsupported scheme {:?}", self.scheme)));
+            builder.0 = Some(Err(ClientError::new(format!(
+                "Unsupported scheme {:?}",
+                self.scheme
+            ))));
         }
     }
 }
@@ -374,7 +378,9 @@ impl sealed::Sealed for &str {
         while !builder.complete() {
             match parser.next() {
                 Some(Ok(c)) => c.add_to(builder),
-                Some(Err(e)) if builder.0.is_none() => builder.0 = Some(Err(e.to_string())),
+                Some(Err(e)) if builder.0.is_none() => {
+                    builder.0 = Some(Err(ClientError::new(e.to_string())))
+                }
                 _ => break,
             }
         }
@@ -396,7 +402,7 @@ macro_rules! impl_http_sources {
                 match self.to_str() {
                     Ok(v) => v.add_to(builder),
                     Err(_) if builder.0.is_none() => {
-                        builder.0 = Some(Err("non-ASCII header value".into()))
+                        builder.0 = Some(Err(ClientError::new("non-ASCII header value")))
                     }
                     Err(_) => {}
                 }
@@ -476,10 +482,37 @@ assert!(matches!(client, PasswordClient::Basic(_)));
     }
 
     /// Returns a new [`PasswordClient`] or fails.
-    pub fn build(self) -> Result<PasswordClient, String> {
-        self.0.unwrap_or_else(|| Err("no challenges given".into()))
+    pub fn build(self) -> Result<PasswordClient, ClientError> {
+        self.0
+            .unwrap_or_else(|| Err(ClientError::new("no challenges given")))
     }
 }
+
+/// Why a challenge can't be used, or can't be answered with the given
+/// [`PasswordParams`].
+///
+/// Returned by [`PasswordClient`], [`basic::Client`], and [`digest::Client`].
+/// Syntax errors from parsing are [`parser::Error`]s, and server-side failures
+/// are [`server::Error`]s.
+///
+/// The [`Display`](std::fmt::Display) output describes the problem; the
+/// contents are otherwise opaque.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClientError(Cow<'static, str>);
+
+impl ClientError {
+    pub(crate) fn new(msg: impl Into<Cow<'static, str>>) -> Self {
+        Self(msg.into())
+    }
+}
+
+impl std::fmt::Display for ClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ClientError {}
 
 /// Client for responding to a password challenge.
 ///
@@ -505,7 +538,7 @@ pub enum PasswordClient {
 ///
 /// This is a convenience wrapper around [`PasswordClientBuilder`].
 impl TryFrom<&ChallengeRef<'_>> for PasswordClient {
-    type Error = String;
+    type Error = ClientError;
 
     fn try_from(value: &ChallengeRef<'_>) -> Result<Self, Self::Error> {
         #[cfg(feature = "basic-scheme")]
@@ -517,7 +550,10 @@ impl TryFrom<&ChallengeRef<'_>> for PasswordClient {
             return Ok(PasswordClient::Digest(digest::Client::try_from(value)?));
         }
 
-        Err(format!("unsupported challenge scheme {:?}", value.scheme))
+        Err(ClientError::new(format!(
+            "unsupported challenge scheme {:?}",
+            value.scheme
+        )))
     }
 }
 
@@ -525,7 +561,7 @@ impl TryFrom<&ChallengeRef<'_>> for PasswordClient {
 ///
 /// This is a convenience wrapper around [`PasswordClientBuilder`].
 impl TryFrom<&str> for PasswordClient {
-    type Error = String;
+    type Error = ClientError;
 
     #[inline]
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -539,7 +575,7 @@ impl TryFrom<&str> for PasswordClient {
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 impl TryFrom<&http::HeaderValue> for PasswordClient {
-    type Error = String;
+    type Error = ClientError;
 
     #[inline]
     fn try_from(value: &http::HeaderValue) -> Result<Self, Self::Error> {
@@ -553,7 +589,7 @@ impl TryFrom<&http::HeaderValue> for PasswordClient {
 #[cfg(feature = "http10")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http10")))]
 impl TryFrom<&http10::HeaderValue> for PasswordClient {
-    type Error = String;
+    type Error = ClientError;
 
     #[inline]
     fn try_from(value: &http10::HeaderValue) -> Result<Self, Self::Error> {
@@ -567,7 +603,7 @@ impl TryFrom<&http10::HeaderValue> for PasswordClient {
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 impl TryFrom<http::header::GetAll<'_, http::HeaderValue>> for PasswordClient {
-    type Error = String;
+    type Error = ClientError;
 
     fn try_from(value: http::header::GetAll<'_, http::HeaderValue>) -> Result<Self, Self::Error> {
         PasswordClient::builder().with(value).build()
@@ -580,7 +616,7 @@ impl TryFrom<http::header::GetAll<'_, http::HeaderValue>> for PasswordClient {
 #[cfg(feature = "http10")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http10")))]
 impl TryFrom<http10::header::GetAll<'_, http10::HeaderValue>> for PasswordClient {
-    type Error = String;
+    type Error = ClientError;
 
     fn try_from(
         value: http10::header::GetAll<'_, http10::HeaderValue>,
@@ -602,7 +638,7 @@ impl PasswordClient {
     /// The caller should use the returned string as an `Authorization` or
     /// `Proxy-Authorization` header value.
     #[allow(unused_variables)] // p is unused with no features.
-    pub fn respond(&mut self, p: &PasswordParams) -> Result<String, String> {
+    pub fn respond(&mut self, p: &PasswordParams) -> Result<String, ClientError> {
         match self {
             #[cfg(feature = "basic-scheme")]
             Self::Basic(c) => Ok(c.respond(p.username, p.password)),
@@ -742,26 +778,26 @@ impl<'i> ParamValueRef<'i> {
     /// Tries to create a new `ParamValueRef` from an escaped sequence, primarily for testing.
     ///
     /// Validates the sequence and counts the number of escapes.
-    pub fn try_from_escaped(escaped: &'i str) -> Result<Self, String> {
+    pub fn try_from_escaped(escaped: &'i str) -> Result<Self, parser::Error<'i>> {
         let mut escapes = 0;
         let mut pos = 0;
         while pos < escaped.len() {
             let slash = memchr::memchr(b'\\', &escaped.as_bytes()[pos..]).map(|off| pos + off);
             for i in pos..slash.unwrap_or(escaped.len()) {
                 if (char_classes(escaped.as_bytes()[i]) & C_QDTEXT) == 0 {
-                    return Err(format!("{:?} has non-qdtext at byte {}", escaped, i));
+                    return Err(parser::Error::new(escaped, i, "non-qdtext"));
                 }
             }
             if let Some(slash) = slash {
                 escapes += 1;
                 if escaped.len() <= slash + 1 {
-                    return Err(format!("{:?} ends at a quoted-pair escape", escaped));
+                    return Err(parser::Error::new(escaped, slash, "incomplete quoted-pair"));
                 }
                 if (char_classes(escaped.as_bytes()[slash + 1]) & C_ESCAPABLE) == 0 {
-                    return Err(format!(
-                        "{:?} has an invalid quote-pair escape at byte {}",
+                    return Err(parser::Error::new(
                         escaped,
-                        slash + 1
+                        slash + 1,
+                        "invalid quoted-pair",
                     ));
                 }
                 pos = slash + 2;
@@ -884,10 +920,17 @@ mod tests {
                 .escapes,
             2
         );
-        ParamValueRef::try_from_escaped("\\").unwrap_err(); // ends in slash
-        ParamValueRef::try_from_escaped("\"").unwrap_err(); // not valid qdtext
-        ParamValueRef::try_from_escaped("\n").unwrap_err(); // not valid qdtext
-        ParamValueRef::try_from_escaped("\\\n").unwrap_err(); // not valid escape
+        for (input, expected) in [
+            ("\\", "incomplete quoted-pair at byte 0"),
+            ("a\"", "non-qdtext at byte 1"),
+            ("\n", "non-qdtext at byte 0"),
+            ("\\\n", "invalid quoted-pair at byte 1"),
+        ] {
+            let e = ParamValueRef::try_from_escaped(input)
+                .unwrap_err()
+                .to_string();
+            assert!(e.starts_with(expected), "{:?}: {}", input, e);
+        }
     }
 
     #[test]

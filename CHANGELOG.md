@@ -16,6 +16,10 @@
 *   `basic::BasicClient` and `digest::DigestClient` are renamed to
     `basic::Client` and `digest::Client`, and are no longer re-exported from
     the crate root.
+*   client-side failures (`PasswordClient`, `PasswordClientBuilder::build`,
+    `basic::Client`, `digest::Client`) return the new `ClientError`, which
+    implements `std::error::Error`, rather than `String`.
+    `ParamValueRef::try_from_escaped` returns a `parser::Error`.
 *   `digest::Algorithm::Sha512Trunc256` is renamed to `Sha512_256`, matching
     the `sha2` crate's naming.
 *   `PasswordClientBuilder::challenge`, `challenges`, and `header_value` are

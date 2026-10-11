@@ -107,6 +107,10 @@ pub struct Error<'i> {
 }
 
 impl<'i> Error<'i> {
+    pub(crate) fn new(input: &'i str, pos: usize, error: &'static str) -> Self {
+        Self { input, pos, error }
+    }
+
     fn invalid_byte(input: &'i str, pos: usize) -> Self {
         Self {
             input,
