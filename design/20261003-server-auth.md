@@ -33,7 +33,8 @@ then `verify(&resp, Request { method, uri, body }, secret)`; only a
 `digest::Server::builder(realm, algorithms)` builds a `Send + Sync` server;
 there's no default algorithm list, as none suits both modern and legacy
 clients. `challenges(stale, now)` returns one validated `Challenge` per offered
-algorithm. The secret is `Secret::Ha1(&str)` or
+algorithm. The secret is `Secret::Ha1(&Ha1)` (an `Ha1` carries its algorithm;
+`Ha1::from_hex` validates a stored value) or
 `Secret::Password { username, password }`.
 `basic::ChallengeBuilder::new(realm)` builds the unchanging `Basic` challenge
 once, validating the realm; `basic::Credentials::parse` and `verify_password`
@@ -60,12 +61,13 @@ highest `nc` per `(nonce, cnonce)` for RFC 7616 §5.5.
 | `verify`: `userhash=true` not offered | `UnofferedUserhash` |
 | `verify`: `uri` differs from the request-target (RFC 7616 §3.4.6) | `UriMismatch` (400) |
 | `verify`: `qop=auth-int` without `body: Some(_)` | `BodyRequired` (500) |
-| `verify`: `Secret::Ha1` wrong hex length | `SecretMismatch` (500) |
+| `verify`: `Secret::Ha1` for another algorithm | `SecretMismatch` (500) |
 | `verify`: username or computed `response` (constant-time) mismatch | `BadCredentials` |
 | `verify`: nonce authentic but expired, everything else valid | `Stale` |
 | `basic::Credentials::parse` (RFC 7617 §2): scheme, token68 base64, `:` split, CTLs, UTF-8 | `Malformed` / `WrongScheme` |
 
-Builders return `ConfigError`, separate from the per-request `ServerError`.
+Builders and `Ha1::from_hex` return `ConfigError`, separate from the
+per-request `ServerError`.
 
 # Errors
 

@@ -28,12 +28,56 @@ pub struct Request<'a> {
     pub body: Option<&'a [u8]>,
 }
 
+/// `H(username ":" realm ":" password)` for one algorithm: a
+/// password-equivalent secret to store in place of the password.
+///
+/// Create with [`Algorithm::ha1`], or [`Ha1::from_hex`] for a stored value.
+#[derive(Clone, Eq, PartialEq)]
+pub struct Ha1 {
+    pub(crate) algorithm: Algorithm,
+    pub(crate) hex: String,
+}
+
+impl Ha1 {
+    /// Parses a stored value: hex (either case) of `algorithm`'s digest
+    /// length.
+    pub fn from_hex(algorithm: Algorithm, hex: &str) -> Result<Self, ConfigError> {
+        if !is_hex(hex, algorithm.hex_len()) {
+            return Err(ConfigError("HA1 is not hex of the algorithm's length"));
+        }
+        Ok(Ha1 {
+            algorithm,
+            hex: hex.to_ascii_lowercase(),
+        })
+    }
+
+    /// Returns the algorithm.
+    pub fn algorithm(&self) -> Algorithm {
+        self.algorithm
+    }
+
+    /// Returns the digest in lowercase hex, for storage.
+    pub fn as_hex(&self) -> &str {
+        &self.hex
+    }
+}
+
+impl std::fmt::Debug for Ha1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ha1")
+            .field("algorithm", &self.algorithm)
+            .field("hex", &"<redacted>")
+            .finish()
+    }
+}
+
 /// The stored secret for the user being authenticated.
 #[derive(Copy, Clone)]
 #[non_exhaustive]
 pub enum Secret<'a> {
-    /// [`Algorithm::ha1`] for the response's algorithm, in lowercase hex.
-    Ha1(&'a str),
+    /// The HA1 for the response's [`CredentialsRef::algorithm`]; others
+    /// fail with [`ServerError::SecretMismatch`].
+    Ha1(&'a Ha1),
 
     /// The plaintext password. `username` is the canonical stored username.
     Password {
@@ -45,7 +89,7 @@ pub enum Secret<'a> {
 impl std::fmt::Debug for Secret<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Secret::Ha1(_) => f.write_str("Ha1(<redacted>)"),
+            Secret::Ha1(ha1) => f.debug_tuple("Ha1").field(ha1).finish(),
             Secret::Password { username, .. } => f
                 .debug_struct("Password")
                 .field("username", username)
@@ -312,11 +356,10 @@ impl Server {
         };
         let ha1 = match secret {
             Secret::Ha1(ha1) => {
-                if !is_hex(ha1, algorithm.hex_len()) || ha1.bytes().any(|b| b.is_ascii_uppercase())
-                {
+                if ha1.algorithm != algorithm {
                     return Err(ServerError::SecretMismatch);
                 }
-                Cow::Borrowed(ha1)
+                Cow::Borrowed(ha1.hex.as_str())
             }
             Secret::Password { username, password } => {
                 let same_user = match response.username() {
@@ -329,7 +372,7 @@ impl Server {
                 if !same_user {
                     return Err(ServerError::BadCredentials);
                 }
-                Cow::Owned(algorithm.ha1(username, &self.realm, password))
+                Cow::Owned(algorithm.ha1_hex(username, &self.realm, password))
             }
         };
         let (nonce, cnonce) = (response.nonce(), response.cnonce());
@@ -408,6 +451,8 @@ mod tests {
     fn rfc2617_3_5() {
         let s = s();
         let ha1 = Algorithm::Md5.ha1("Mufasa", "testrealm@host.com", "Circle Of Life");
+        let upper_ha1 = Ha1::from_hex(Algorithm::Md5, &ha1.as_hex().to_ascii_uppercase()).unwrap();
+        assert_eq!(upper_ha1, ha1);
         let upper_resp = RFC2617.replace(
             "6629fae49393a05397450978507c4ef1",
             "6629FAE49393A05397450978507C4EF1",
@@ -465,12 +510,14 @@ mod tests {
         let uh = b().qop(Qop::Auth.into()).userhash(true).build().unwrap();
         let h = s.hash_username("Mufasa", Algorithm::Md5);
         let simba = uh.hash_username("Simba", Algorithm::Md5);
-        let z = "z".repeat(32);
-        let upper = Algorithm::Md5
-            .ha1("Mufasa", "testrealm@host.com", "Circle Of Life")
-            .to_ascii_uppercase();
+        // Right password, but for SHA-512-256 (same hex length as SHA-256).
+        let sha512_256 =
+            Algorithm::Sha512_256.ha1("Mufasa", "testrealm@host.com", "Circle Of Life");
+        let sha_header = RFC2617
+            .replace(", opaque=", ", algorithm=SHA-256, opaque=")
+            .replace("6629fae49393a05397450978507c4ef1", &"0".repeat(64));
         #[rustfmt::skip]
-        let cases: [(&Server, String, Request<'_>, Secret<'_>, ServerError); 15] = [
+        let cases: [(&Server, String, Request<'_>, Secret<'_>, ServerError); 14] = [
             (&s, r("realm=\"testrealm@host.com\"", "realm=\"other\""), ok, pw("Mufasa", "Circle Of Life"), WrongRealm),
             (&sha, RFC2617.into(), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
             (&s, r("opaque=", "algorithm=MD5-sess, opaque="), ok, pw("Mufasa", "Circle Of Life"), UnofferedAlgorithm),
@@ -480,9 +527,8 @@ mod tests {
             (&s, r("username=\"Mufasa\"", &format!("username=\"{}\", userhash=true", h)), ok, pw("Mufasa", "Circle Of Life"), UnofferedUserhash),
             (&s, RFC2617.into(), get("/dir/other.html"), pw("Mufasa", "Circle Of Life"), UriMismatch),
             (&s, r("qop=auth", "qop=auth-int"), ok, pw("Mufasa", "Circle Of Life"), BodyRequired),
-            (&s, RFC2617.into(), ok, Secret::Ha1("abc"), SecretMismatch),
-            (&s, RFC2617.into(), ok, Secret::Ha1(&z), SecretMismatch),
-            (&s, RFC2617.into(), ok, Secret::Ha1(&upper), SecretMismatch),
+            (&s, RFC2617.into(), ok, Secret::Ha1(&sha512_256), SecretMismatch),
+            (&sha, sha_header, ok, Secret::Ha1(&sha512_256), SecretMismatch),
             (&s, RFC2617.into(), ok, pw("Mufasa", "Circle of Life"), BadCredentials),
             (&s, RFC2617.into(), ok, pw("Simba", "Circle Of Life"), BadCredentials),
             (&uh, r("username=\"Mufasa\"", &format!("username=\"{}\", userhash=true", simba)), ok, pw("Mufasa", "Circle Of Life"), BadCredentials),
@@ -493,8 +539,30 @@ mod tests {
     }
 
     #[test]
+    fn ha1_from_hex() {
+        for (algorithm, hex) in [
+            (Algorithm::Md5, "abc".to_owned()),
+            (Algorithm::Md5, "z".repeat(32)),
+            (Algorithm::Sha256, "0".repeat(32)),
+        ] {
+            assert!(
+                Ha1::from_hex(algorithm, &hex).is_err(),
+                "{:?} {}",
+                algorithm,
+                hex
+            );
+        }
+        let h = Ha1::from_hex(Algorithm::Sha256, &"A".repeat(64)).unwrap();
+        assert_eq!(
+            (h.algorithm(), h.as_hex()),
+            (Algorithm::Sha256, &*"a".repeat(64))
+        );
+        assert!(!format!("{:?}", h).contains("aaaa"));
+    }
+
+    #[test]
     fn nc_hashed_as_sent() {
-        let ha1 = Algorithm::Md5.ha1("Mufasa", "testrealm@host.com", "Circle Of Life");
+        let ha1 = Algorithm::Md5.ha1_hex("Mufasa", "testrealm@host.com", "Circle Of Life");
         let h_a2 = h_a2(Algorithm::Md5, Qop::Auth, "GET", "/dir/index.html", b"");
         let resp = Algorithm::Md5.h(&[
             ha1.as_bytes(),
@@ -634,6 +702,9 @@ mod tests {
             d
         );
         assert!(!format!("{:?}", pw("Mufasa", "Circle Of Life")).contains("Circle"));
+        let ha1 = Algorithm::Md5.ha1("Mufasa", "testrealm@host.com", "Circle Of Life");
+        let d = format!("{:?}", Secret::Ha1(&ha1));
+        assert!(!d.contains(ha1.as_hex()), "{}", d);
         let d = format!(
             "{:?}",
             Server::builder("r", &[Algorithm::Md5]).nonce_key([9; 32])

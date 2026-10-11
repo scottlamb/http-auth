@@ -8,7 +8,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use http_auth::digest::{self, Algorithm, Qop, Request, Secret};
+use http_auth::digest::{self, Algorithm, Ha1, Qop, Request, Secret};
 
 fuzz_target!(|data: &str| {
     let Ok(r) = digest::CredentialsRef::parse(data) else {
@@ -38,5 +38,6 @@ fuzz_target!(|data: &str| {
             password: "p",
         },
     );
-    let _ = server.verify(&r, req, Secret::Ha1("00000000000000000000000000000000"));
+    let ha1 = Ha1::from_hex(Algorithm::Md5, "00000000000000000000000000000000").unwrap();
+    let _ = server.verify(&r, req, Secret::Ha1(&ha1));
 });

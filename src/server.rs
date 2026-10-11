@@ -86,8 +86,8 @@ pub enum ServerError {
     /// The response uses `qop=auth-int` but no body was supplied to verify.
     BodyRequired,
 
-    /// The supplied [`crate::digest::Secret::Ha1`] isn't lowercase hex of
-    /// the response's algorithm's length: a caller bug.
+    /// The supplied [`crate::digest::Secret::Ha1`] is for a different
+    /// algorithm than the response's: a caller bug.
     SecretMismatch,
 
     /// Wrong username or password.
@@ -141,7 +141,8 @@ impl std::fmt::Display for ServerError {
 
 impl std::error::Error for ServerError {}
 
-/// An invalid value given when configuring a server or challenge.
+/// An invalid value given when configuring a server or challenge, or an
+/// invalid stored secret.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigError(pub(crate) &'static str);
 

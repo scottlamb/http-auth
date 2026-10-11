@@ -34,12 +34,13 @@
 
 *   server support behind the `server` feature: `basic::ChallengeBuilder`,
     `basic::Credentials`, `digest::Server`, `digest::CredentialsRef`,
-    `Challenge`, `ServerError`, `ConfigError`.
+    `digest::Ha1`, `Challenge`, `ServerError`, `ConfigError`.
     `PasswordClientBuilder::with` also accepts a `&Challenge`.
 *   `parse_credentials` and `CredentialsRef` for `Authorization` /
     `Proxy-Authorization` values.
 *   `impl Display for ChallengeRef`.
-*   `digest::Algorithm::ha1`.
+*   `digest::Algorithm::ha1` (with the `server` feature), returning a
+    `digest::Ha1`.
 *   `digest::Qop` now implements `PartialEq` and `Eq`.
 *   `digest::QopSet` constructors: `From<Qop>`, `BitOr`, `contains`,
     `is_empty`.

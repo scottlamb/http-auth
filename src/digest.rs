@@ -23,7 +23,7 @@ mod server;
 pub use self::response::{CredentialsRef, NonceChecked, Unchecked, Username};
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use self::server::{Request, Secret, Server, ServerBuilder};
+pub use self::server::{Ha1, Request, Secret, Server, ServerBuilder};
 
 /// "Quality of protection" value.
 ///
@@ -321,7 +321,7 @@ impl Client {
     /// that method name ever shows up in production stack traces.
     fn respond_inner(&mut self, p: &PasswordParams, cnonce: &str) -> Result<String, ClientError> {
         let realm = self.realm();
-        let ha1 = self.algorithm.ha1(p.username, realm, p.password);
+        let ha1 = self.algorithm.ha1_hex(p.username, realm, p.password);
         let h_a1 = h_a1(self.algorithm, self.session, &ha1, self.nonce(), cnonce);
 
         // Select the best available qop and calculate H(A2) as in
@@ -572,9 +572,20 @@ impl Algorithm {
         }
     }
 
-    /// Returns `H(username ":" realm ":" password)` in lowercase hex
-    /// ([RFC 7616 section 3.4.2](https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.2)).
-    pub fn ha1(&self, username: &str, realm: &str, password: &str) -> String {
+    /// Returns `H(username ":" realm ":" password)`
+    /// ([RFC 7616 section 3.4.2](https://datatracker.ietf.org/doc/html/rfc7616#section-3.4.2)),
+    /// for storing in place of the password.
+    #[cfg(feature = "server")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
+    pub fn ha1(self, username: &str, realm: &str, password: &str) -> Ha1 {
+        Ha1 {
+            algorithm: self,
+            hex: self.ha1_hex(username, realm, password),
+        }
+    }
+
+    /// Returns `H(username ":" realm ":" password)` in lowercase hex.
+    fn ha1_hex(&self, username: &str, realm: &str, password: &str) -> String {
         self.h(&[username.as_bytes(), realm.as_bytes(), password.as_bytes()])
     }
 
