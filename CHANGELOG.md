@@ -10,6 +10,11 @@
     `String`.
 *   `digest::Algorithm::Sha512Trunc256` is renamed to `Sha512_256`, matching
     the `sha2` crate's naming.
+*   `PasswordClientBuilder::challenge`, `challenges`, and `header_value` are
+    replaced by a single `with` method accepting a `&ChallengeRef`, `&str`,
+    `&http::HeaderValue`, or `http::header::GetAll` (via the sealed
+    `ChallengeSource` trait, which callers don't need to import). The
+    `HeaderValue` trait and `ToStrError` are removed.
 
 ### Added
 

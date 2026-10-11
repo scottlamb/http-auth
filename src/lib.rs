@@ -238,7 +238,7 @@ impl std::fmt::Debug for ParamsPrinter<'_> {
 /// The builder allows more flexibility. For example, if you are using a HTTP
 /// library which is not based on a `http` crate, you might need to create
 /// a `PasswordClient` from an iterator over multiple `WWW-Authenticate`
-/// headers. You can feed each to [`PasswordClientBuilder::challenges`].
+/// headers. You can feed each to [`PasswordClientBuilder::with`].
 ///
 /// Prefers `Digest` over `Basic`, consistent with the [RFC 7235 section
 /// 2.1](https://datatracker.ietf.org/doc/html/rfc7235#section-2.1) advice
@@ -261,8 +261,8 @@ impl std::fmt::Debug for ParamsPrinter<'_> {
 ```rust
 use http_auth::PasswordClient;
 let client = PasswordClient::builder()
-    .challenges("UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB")
-    .challenges("Digest \
+    .with("UnsupportedSchemeA, Basic realm=\"foo\", UnsupportedSchemeB")
+    .with("Digest \
                  realm=\"http-auth@example.org\", \
                  qop=\"auth, auth-int\", \
                  algorithm=MD5, \
@@ -283,46 +283,154 @@ pub struct PasswordClientBuilder(
     Option<Result<PasswordClient, String>>,
 );
 
-/// An error returned by [`HeaderValue::to_str`].
-pub struct ToStrError {
-    _priv: (),
-}
+/// Challenge(s) which can be fed to [`PasswordClientBuilder::with`].
+///
+/// This trait is sealed; it's implemented for the following types:
+///
+/// *   [`ChallengeRef`]: a single parsed challenge.
+/// *   `&str`: an unparsed challenge list. Use `.as_str()` to pass a
+///     `String`.
+/// *   [`http::HeaderValue`] (with the `http` or `http10` feature): an
+///     unparsed challenge list.
+/// *   [`http::header::GetAll`] (with the `http` or `http10` feature): all
+///     the challenge lists from the `WWW-Authenticate` headers of a response.
+///
+/// Callers don't need to import this trait to use
+/// [`PasswordClientBuilder::with`].
+pub trait ChallengeSource: sealed::Sealed {}
 
-/// A trait for the parts needed from http crate 0.2 or 1.0's `HeaderValue` type.
-#[cfg(any(feature = "http", feature = "http10"))]
-pub trait HeaderValue {
-    fn to_str(&self) -> Result<&str, ToStrError>;
-}
-
-#[cfg(feature = "http")]
-impl HeaderValue for http::HeaderValue {
-    fn to_str(&self) -> Result<&str, ToStrError> {
-        self.to_str().map_err(|_| ToStrError { _priv: () })
+mod sealed {
+    pub trait Sealed {
+        fn add_to(self, builder: &mut super::PasswordClientBuilder);
     }
 }
 
-#[cfg(feature = "http10")]
-impl HeaderValue for http10::HeaderValue {
-    fn to_str(&self) -> Result<&str, ToStrError> {
-        self.to_str().map_err(|_| ToStrError { _priv: () })
+impl ChallengeSource for &ChallengeRef<'_> {}
+impl sealed::Sealed for &ChallengeRef<'_> {
+    fn add_to(self, builder: &mut PasswordClientBuilder) {
+        if builder.complete() {
+            return;
+        }
+
+        #[cfg(feature = "digest-scheme")]
+        if self.scheme.eq_ignore_ascii_case("Digest") {
+            match DigestClient::try_from(self) {
+                Ok(c) => builder.0 = Some(Ok(PasswordClient::Digest(c))),
+                Err(e) if builder.0.is_none() => builder.0 = Some(Err(e)),
+                _ => {}
+            }
+            return;
+        }
+
+        #[cfg(feature = "basic-scheme")]
+        if self.scheme.eq_ignore_ascii_case("Basic") && !matches!(builder.0, Some(Ok(_))) {
+            match BasicClient::try_from(self) {
+                Ok(c) => builder.0 = Some(Ok(PasswordClient::Basic(c))),
+                Err(e) if builder.0.is_none() => builder.0 = Some(Err(e)),
+                _ => {}
+            }
+            return;
+        }
+
+        if builder.0.is_none() {
+            builder.0 = Some(Err(format!("Unsupported scheme {:?}", self.scheme)));
+        }
     }
 }
+
+impl ChallengeSource for &str {}
+impl sealed::Sealed for &str {
+    fn add_to(self, builder: &mut PasswordClientBuilder) {
+        let mut parser = ChallengeParser::new(self);
+        while !builder.complete() {
+            match parser.next() {
+                Some(Ok(c)) => c.add_to(builder),
+                Some(Err(e)) if builder.0.is_none() => builder.0 = Some(Err(e.to_string())),
+                _ => break,
+            }
+        }
+    }
+}
+
+macro_rules! impl_http_sources {
+    ($feature:literal, $http:ident) => {
+        #[cfg(feature = $feature)]
+        #[cfg_attr(docsrs, doc(cfg(feature = $feature)))]
+        impl ChallengeSource for &$http::HeaderValue {}
+
+        #[cfg(feature = $feature)]
+        impl sealed::Sealed for &$http::HeaderValue {
+            fn add_to(self, builder: &mut PasswordClientBuilder) {
+                if builder.complete() {
+                    return;
+                }
+                match self.to_str() {
+                    Ok(v) => v.add_to(builder),
+                    Err(_) if builder.0.is_none() => {
+                        builder.0 = Some(Err("non-ASCII header value".into()))
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
+        #[cfg(feature = $feature)]
+        #[cfg_attr(docsrs, doc(cfg(feature = $feature)))]
+        impl ChallengeSource for $http::header::GetAll<'_, $http::HeaderValue> {}
+
+        #[cfg(feature = $feature)]
+        impl sealed::Sealed for $http::header::GetAll<'_, $http::HeaderValue> {
+            fn add_to(self, builder: &mut PasswordClientBuilder) {
+                for v in self {
+                    if builder.complete() {
+                        break;
+                    }
+                    v.add_to(builder);
+                }
+            }
+        }
+    };
+}
+
+impl_http_sources!("http", http);
+impl_http_sources!("http10", http10);
 
 impl PasswordClientBuilder {
-    /// Considers all challenges from the given [`http::HeaderValue`] challenge list.
-    #[cfg(any(feature = "http", feature = "http10"))]
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "http", feature = "http10"))))]
-    pub fn header_value<V: HeaderValue>(mut self, value: &V) -> Self {
-        if self.complete() {
-            return self;
-        }
+    /// Considers the given challenge(s).
+    ///
+    /// Accepts a single parsed [`ChallengeRef`], an unparsed `&str`
+    /// challenge list, or (with the `http` or `http10` feature) a
+    /// [`http::HeaderValue`] or [`http::header::GetAll`]. See
+    /// [`ChallengeSource`].
+    #[cfg_attr(
+        all(feature = "http10", feature = "basic-scheme"),
+        doc = r##"
 
-        match value.to_str() {
-            Ok(v) => self = self.challenges(v),
-            Err(_) if self.0.is_none() => self.0 = Some(Err("non-ASCII header value".into())),
-            _ => {}
-        }
+## Example
 
+```rust
+use http10::header::{HeaderMap, HeaderValue, WWW_AUTHENTICATE};
+use http_auth::{ChallengeParser, PasswordClient};
+
+let mut headers = HeaderMap::new();
+headers.append(WWW_AUTHENTICATE, HeaderValue::from_static("UnsupportedSchemeA"));
+let parsed = ChallengeParser::new("UnsupportedSchemeB").next().unwrap().unwrap();
+let owned = String::from("UnsupportedSchemeD");
+let client = PasswordClient::builder()
+    .with(headers.get_all(WWW_AUTHENTICATE))
+    .with(&HeaderValue::from_static("UnsupportedSchemeC"))
+    .with(&parsed)
+    .with(owned.as_str())
+    .with("Basic realm=\"foo\"")
+    .build()
+    .unwrap();
+assert!(matches!(client, PasswordClient::Basic(_)));
+```
+"##
+    )]
+    #[inline]
+    pub fn with<S: ChallengeSource>(mut self, source: S) -> Self {
+        source.add_to(&mut self);
         self
     }
 
@@ -336,52 +444,6 @@ impl PasswordClientBuilder {
     #[cfg(not(feature = "digest-scheme"))]
     fn complete(&self) -> bool {
         matches!(self.0, Some(Ok(_)))
-    }
-
-    /// Considers all challenges from the given `&str` challenge list.
-    pub fn challenges(mut self, value: &str) -> Self {
-        let mut parser = ChallengeParser::new(value);
-        while !self.complete() {
-            match parser.next() {
-                Some(Ok(c)) => self = self.challenge(&c),
-                Some(Err(e)) if self.0.is_none() => self.0 = Some(Err(e.to_string())),
-                _ => break,
-            }
-        }
-        self
-    }
-
-    /// Considers a single challenge.
-    pub fn challenge(mut self, challenge: &ChallengeRef<'_>) -> Self {
-        if self.complete() {
-            return self;
-        }
-
-        #[cfg(feature = "digest-scheme")]
-        if challenge.scheme.eq_ignore_ascii_case("Digest") {
-            match DigestClient::try_from(challenge) {
-                Ok(c) => self.0 = Some(Ok(PasswordClient::Digest(c))),
-                Err(e) if self.0.is_none() => self.0 = Some(Err(e)),
-                _ => {}
-            }
-            return self;
-        }
-
-        #[cfg(feature = "basic-scheme")]
-        if challenge.scheme.eq_ignore_ascii_case("Basic") && !matches!(self.0, Some(Ok(_))) {
-            match BasicClient::try_from(challenge) {
-                Ok(c) => self.0 = Some(Ok(PasswordClient::Basic(c))),
-                Err(e) if self.0.is_none() => self.0 = Some(Err(e)),
-                _ => {}
-            }
-            return self;
-        }
-
-        if self.0.is_none() {
-            self.0 = Some(Err(format!("Unsupported scheme {:?}", challenge.scheme)));
-        }
-
-        self
     }
 
     /// Returns a new [`PasswordClient`] or fails.
@@ -438,7 +500,7 @@ impl TryFrom<&str> for PasswordClient {
 
     #[inline]
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        PasswordClient::builder().challenges(value).build()
+        PasswordClient::builder().with(value).build()
     }
 }
 
@@ -452,7 +514,7 @@ impl TryFrom<&http::HeaderValue> for PasswordClient {
 
     #[inline]
     fn try_from(value: &http::HeaderValue) -> Result<Self, Self::Error> {
-        PasswordClient::builder().header_value(value).build()
+        PasswordClient::builder().with(value).build()
     }
 }
 
@@ -466,7 +528,7 @@ impl TryFrom<&http10::HeaderValue> for PasswordClient {
 
     #[inline]
     fn try_from(value: &http10::HeaderValue) -> Result<Self, Self::Error> {
-        PasswordClient::builder().header_value(value).build()
+        PasswordClient::builder().with(value).build()
     }
 }
 
@@ -479,11 +541,7 @@ impl TryFrom<http::header::GetAll<'_, http::HeaderValue>> for PasswordClient {
     type Error = String;
 
     fn try_from(value: http::header::GetAll<'_, http::HeaderValue>) -> Result<Self, Self::Error> {
-        let mut builder = PasswordClient::builder();
-        for v in value {
-            builder = builder.header_value(v);
-        }
-        builder.build()
+        PasswordClient::builder().with(value).build()
     }
 }
 
@@ -498,11 +556,7 @@ impl TryFrom<http10::header::GetAll<'_, http10::HeaderValue>> for PasswordClient
     fn try_from(
         value: http10::header::GetAll<'_, http10::HeaderValue>,
     ) -> Result<Self, Self::Error> {
-        let mut builder = PasswordClient::builder();
-        for v in value {
-            builder = builder.header_value(v);
-        }
-        builder.build()
+        PasswordClient::builder().with(value).build()
     }
 }
 
