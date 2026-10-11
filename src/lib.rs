@@ -128,19 +128,36 @@ pub(crate) fn is_token(s: &str) -> bool {
 /// without directly using `ChallengeRef`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChallengeRef<'i> {
-    /// The scheme name, which should be compared case-insensitively.
-    pub scheme: &'i str,
-
-    /// The `token68` or auth-params.
-    pub body: AuthBodyRef<'i>,
+    scheme: &'i str,
+    body: AuthBodyRef<'i>,
 }
 
 impl<'i> ChallengeRef<'i> {
-    pub fn new(scheme: &'i str) -> Self {
-        ChallengeRef {
+    /// Creates a challenge, checking that `scheme` and any parameter names
+    /// are tokens and that a `token68` body is well-formed.
+    pub fn try_new(scheme: &'i str, body: AuthBodyRef<'i>) -> Result<Self, parser::Error<'i>> {
+        parser::validate(scheme, &body)?;
+        Ok(Self { scheme, body })
+    }
+
+    /// Creates a challenge with no parameters, without validation.
+    pub(crate) fn empty(scheme: &'i str) -> Self {
+        Self {
             scheme,
             body: AuthBodyRef::Params(Vec::new()),
         }
+    }
+
+    /// Returns the scheme name, which should be compared case-insensitively.
+    #[inline]
+    pub fn scheme(&self) -> &'i str {
+        self.scheme
+    }
+
+    /// Returns the `token68` or auth-params.
+    #[inline]
+    pub fn body(&self) -> &AuthBodyRef<'i> {
+        &self.body
     }
 }
 
@@ -174,11 +191,29 @@ impl std::fmt::Display for ChallengeRef<'_> {
 /// to the original header value. Produced by [`parse_credentials`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CredentialsRef<'i> {
-    /// The scheme name, which should be compared case-insensitively.
-    pub scheme: &'i str,
+    scheme: &'i str,
+    body: AuthBodyRef<'i>,
+}
 
-    /// The `token68` or auth-params.
-    pub body: AuthBodyRef<'i>,
+impl<'i> CredentialsRef<'i> {
+    /// Creates credentials, checking that `scheme` and any parameter names
+    /// are tokens and that a `token68` body is well-formed.
+    pub fn try_new(scheme: &'i str, body: AuthBodyRef<'i>) -> Result<Self, parser::Error<'i>> {
+        parser::validate(scheme, &body)?;
+        Ok(Self { scheme, body })
+    }
+
+    /// Returns the scheme name, which should be compared case-insensitively.
+    #[inline]
+    pub fn scheme(&self) -> &'i str {
+        self.scheme
+    }
+
+    /// Returns the `token68` or auth-params.
+    #[inline]
+    pub fn body(&self) -> &AuthBodyRef<'i> {
+        &self.body
+    }
 }
 
 /// Body of a [`ChallengeRef`] or [`CredentialsRef`].
@@ -656,14 +691,11 @@ pub struct PasswordParams<'a> {
 /// assert_eq!(
 ///     parse_challenges("UnsupportedSchemeA, Basic realm=\"foo\"").unwrap(),
 ///     vec![
-///         ChallengeRef {
-///             scheme: "UnsupportedSchemeA",
-///             body: AuthBodyRef::Params(vec![]),
-///         },
-///         ChallengeRef {
-///             scheme: "Basic",
-///             body: AuthBodyRef::Params(vec![("realm", ParamValueRef::try_from_escaped("foo").unwrap())]),
-///         },
+///         ChallengeRef::try_new("UnsupportedSchemeA", AuthBodyRef::Params(vec![])).unwrap(),
+///         ChallengeRef::try_new(
+///             "Basic",
+///             AuthBodyRef::Params(vec![("realm", ParamValueRef::try_from_escaped("foo").unwrap())]),
+///         ).unwrap(),
 ///     ],
 /// );
 ///

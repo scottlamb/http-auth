@@ -41,19 +41,18 @@ macro_rules! trace {
 /// ## Example
 ///
 /// ```rust
-/// use http_auth::{parser::ChallengeParser, AuthBodyRef, ChallengeRef, ParamValueRef};
+/// use http_auth::{parser::ChallengeParser, AuthBodyRef, ParamValueRef};
 /// let challenges = "UnsupportedSchemeA, Basic realm=\"foo\", error realm=\"unclosed";
 /// let mut parser = ChallengeParser::new(challenges);
 /// let c = parser.next().unwrap().unwrap();
-/// assert_eq!(c, ChallengeRef {
-///     scheme: "UnsupportedSchemeA",
-///     body: AuthBodyRef::Params(vec![]),
-/// });
+/// assert_eq!(c.scheme(), "UnsupportedSchemeA");
+/// assert_eq!(c.body(), &AuthBodyRef::Params(vec![]));
 /// let c = parser.next().unwrap().unwrap();
-/// assert_eq!(c, ChallengeRef {
-///     scheme: "Basic",
-///     body: AuthBodyRef::Params(vec![("realm", ParamValueRef::try_from_escaped("foo").unwrap())]),
-/// });
+/// assert_eq!(c.scheme(), "Basic");
+/// assert_eq!(
+///     c.body(),
+///     &AuthBodyRef::Params(vec![("realm", ParamValueRef::try_from_escaped("foo").unwrap())]),
+/// );
 /// let c = parser.next().unwrap().unwrap_err();
 /// ```
 ///
@@ -299,7 +298,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                                 return Some(Err(Error::invalid_byte(self.input, self.pos)));
                             }
                             self.state = State::Token {
-                                challenge: Some(ChallengeRef::new(&self.input[token_pos])),
+                                challenge: Some(ChallengeRef::empty(&self.input[token_pos])),
                                 token_pos: self.pos..self.pos + 1,
                                 cur: Possibilities(P_PARAM_KEY),
                             };
@@ -312,7 +311,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                         match b {
                             b',' if (cur.0 & P_SCHEME) != 0 && !self.single => {
                                 self.state = State::PreToken {
-                                    challenge: Some(ChallengeRef::new(&self.input[token_pos])),
+                                    challenge: Some(ChallengeRef::empty(&self.input[token_pos])),
                                     next: Possibilities(
                                         P_SCHEME | P_WHITESPACE | P_EOF | P_COMMA_EOF,
                                     ),
@@ -564,7 +563,7 @@ impl<'i> Iterator for ChallengeParser<'i> {
                     };
                     return Some(Ok(challenge));
                 }
-                return Some(Ok(ChallengeRef::new(&self.input[token_pos])));
+                return Some(Ok(ChallengeRef::empty(&self.input[token_pos])));
             }
             State::PostEquals { .. } => {
                 trace!("eof, PostEquals");
@@ -626,8 +625,8 @@ fn push_param<'i>(challenge: &mut ChallengeRef<'i>, key: &'i str, value: ParamVa
 /// ```rust
 /// use http_auth::{parse_credentials, AuthBodyRef};
 /// let c = parse_credentials("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
-/// assert_eq!(c.scheme, "Basic");
-/// assert_eq!(c.body, AuthBodyRef::Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="));
+/// assert_eq!(c.scheme(), "Basic");
+/// assert_eq!(c.body(), &AuthBodyRef::Token68("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="));
 /// ```
 pub fn parse_credentials(input: &str) -> Result<CredentialsRef<'_>, Error<'_>> {
     let input = input.trim_matches(|c| c == ' ' || c == '\t');
@@ -638,6 +637,54 @@ pub fn parse_credentials(input: &str) -> Result<CredentialsRef<'_>, Error<'_>> {
         scheme: c.scheme,
         body: c.body,
     })
+}
+
+/// Checks `scheme` and `body` for [`ChallengeRef::try_new`] and
+/// [`CredentialsRef::try_new`].
+pub(crate) fn validate<'i>(scheme: &'i str, body: &AuthBodyRef<'i>) -> Result<(), Error<'i>> {
+    check_token(scheme, "invalid auth-scheme")?;
+    match body {
+        AuthBodyRef::Token68(t) => {
+            let chars = t.trim_start_matches(|c: char| {
+                c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '+' | '/')
+            });
+            let rest = chars.trim_start_matches('=');
+            if chars.len() == t.len() || !rest.is_empty() {
+                return Err(Error {
+                    input: t,
+                    pos: if chars.len() == t.len() {
+                        0
+                    } else {
+                        t.len() - rest.len()
+                    },
+                    error: "invalid token68",
+                });
+            }
+        }
+        AuthBodyRef::Params(params) => {
+            for (k, _) in params {
+                check_token(k, "invalid auth-param name")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Checks that `s` is a non-empty token, else describes the first bad byte.
+fn check_token<'i>(s: &'i str, error: &'static str) -> Result<(), Error<'i>> {
+    match s.bytes().position(|b| (char_classes(b) & C_TCHAR) == 0) {
+        Some(pos) => Err(Error {
+            input: s,
+            pos,
+            error,
+        }),
+        None if s.is_empty() => Err(Error {
+            input: s,
+            pos: 0,
+            error,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// If `input[start..]` is a `token68` followed by a comma, OWS then a comma, or
@@ -819,6 +866,42 @@ mod tests {
             r#"Digest a="b","#,
         ] {
             assert!(parse_credentials(input).is_err(), "{:?}", input);
+        }
+    }
+
+    #[test]
+    fn try_new_validates() {
+        use crate::CredentialsRef;
+        use AuthBodyRef::{Params, Token68};
+        let v = ParamValueRef::new(0, "v");
+        for (scheme, body) in [
+            ("Basic", Params(vec![])),
+            ("Basic", Params(vec![("realm", v)])),
+            ("Negotiate", Token68("abc")),
+            ("Basic", Token68("a+/b==")),
+        ] {
+            ChallengeRef::try_new(scheme, body.clone()).unwrap();
+            CredentialsRef::try_new(scheme, body).unwrap();
+        }
+        for (scheme, body, error, pos) in [
+            ("", Params(vec![]), "invalid auth-scheme", 0),
+            ("Ba sic", Params(vec![]), "invalid auth-scheme", 2),
+            ("Basic", Params(vec![("", v)]), "invalid auth-param name", 0),
+            (
+                "Basic",
+                Params(vec![("re\"alm", v)]),
+                "invalid auth-param name",
+                2,
+            ),
+            ("Basic", Token68(""), "invalid token68", 0),
+            ("Basic", Token68("=abc"), "invalid token68", 0),
+            ("Basic", Token68("ab=c"), "invalid token68", 3),
+            ("Basic", Token68("a b"), "invalid token68", 1),
+        ] {
+            let e = ChallengeRef::try_new(scheme, body.clone()).unwrap_err();
+            assert_eq!((e.error, e.pos), (error, pos), "{:?} {:?}", scheme, body);
+            let e = CredentialsRef::try_new(scheme, body).unwrap_err();
+            assert_eq!((e.error, e.pos), (error, pos));
         }
     }
 

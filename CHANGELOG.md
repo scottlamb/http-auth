@@ -2,10 +2,14 @@
 
 ### Breaking
 
-*   `ChallengeRef.params` is replaced by `body: AuthBodyRef`, which is either
-    `Token68` or `Params`. `ChallengeParser` accepts `token68` challenges and
-    `1*SP` between the scheme and body ([RFC 9110 section
+*   `ChallengeRef.params` is replaced by an `AuthBodyRef` body, which is
+    either `Token68` or `Params`. `ChallengeParser` accepts `token68`
+    challenges and `1*SP` between the scheme and body ([RFC 9110 section
     11.2](https://datatracker.ietf.org/doc/html/rfc9110#section-11.2)).
+*   `ChallengeRef` and `CredentialsRef` fields are private, so their
+    contents are always valid: use the `scheme()` and `body()` getters, and
+    construct via the parser or the validating `try_new(scheme, body)`.
+    `ChallengeRef::new` is removed.
 *   `ParamValue` is renamed to `ParamValueRef`, for consistency with
     `ChallengeRef`. `ParamValueRef::to_unescaped` now returns
     `std::borrow::Cow<str>` instead of `String`.

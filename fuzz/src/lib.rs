@@ -183,9 +183,9 @@ fn challenge(input: &str) -> nom::IResult<&str, ChallengeRef<'_>> {
                 )),
             )),
         )),
-        |(scheme, body)| ChallengeRef {
-            scheme,
-            body: body.unwrap_or(AuthBodyRef::Params(Vec::new())),
+        |(scheme, body)| {
+            ChallengeRef::try_new(scheme, body.unwrap_or(AuthBodyRef::Params(Vec::new())))
+                .expect("RFC grammar should produce a valid ChallengeRef")
         },
     )(input)
 }
@@ -248,9 +248,9 @@ pub fn credentials(input: &str) -> nom::IResult<&str, CredentialsRef<'_>> {
                 )),
             )),
         )),
-        |(scheme, body)| CredentialsRef {
-            scheme,
-            body: body.unwrap_or(AuthBodyRef::Params(Vec::new())),
+        |(scheme, body)| {
+            CredentialsRef::try_new(scheme, body.unwrap_or(AuthBodyRef::Params(Vec::new())))
+                .expect("RFC grammar should produce valid CredentialsRef")
         },
     )(input)
 }
@@ -286,13 +286,11 @@ mod tests {
             challenges(r#"Scheme foo="blah \" blah""#),
             Ok((
                 "",
-                vec![ChallengeRef {
-                    scheme: "Scheme",
-                    body: AuthBodyRef::Params(vec![(
-                        "foo",
-                        ParamValueRef::new(1, "blah \\\" blah")
-                    )]),
-                }]
+                vec![ChallengeRef::try_new(
+                    "Scheme",
+                    AuthBodyRef::Params(vec![("foo", ParamValueRef::new(1, "blah \\\" blah"))]),
+                )
+                .unwrap()]
             ))
         );
     }
