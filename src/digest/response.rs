@@ -7,7 +7,7 @@
 use std::{borrow::Cow, marker::PhantomData};
 
 use super::{is_hex, Algorithm, Qop};
-use crate::server::{parse_scheme, ServerError};
+use crate::server::{CredentialsSource, ServerError};
 
 /// Typestate for a [`CredentialsRef`] whose nonce hasn't been checked yet.
 #[derive(Debug)]
@@ -65,10 +65,18 @@ impl<'i> CredentialsRef<'i, Unchecked> {
     ///
     /// Non-ASCII usernames must use `username*`
     /// ([RFC 8187](https://datatracker.ietf.org/doc/html/rfc8187)).
-    pub fn parse(header_value: &'i str) -> Result<Self, ServerError> {
+    ///
+    /// Returns `None` if `source` uses another scheme. See
+    /// [`CredentialsSource`] for accepted sources, including how to accept
+    /// more than one scheme.
+    pub fn parse<S: CredentialsSource<'i>>(source: S) -> Option<Result<Self, ServerError>> {
+        source.parse_scheme("Digest", Self::from_body)
+    }
+
+    /// Parses the body of credentials already known to use `Digest`.
+    fn from_body(body: &crate::AuthBodyRef<'i>) -> Result<Self, ServerError> {
         use ServerError::Malformed;
-        let c = parse_scheme(header_value, "Digest")?;
-        let params = c.body.params().ok_or(Malformed("expected auth-params"))?;
+        let params = body.params().ok_or(Malformed("expected auth-params"))?;
         let [username, username_ext, realm, uri, nonce, cnonce, nc, qop, response, opaque, algorithm, userhash] =
             crate::find_params(
                 params,
@@ -274,7 +282,7 @@ pub(crate) mod tests {
 
     #[test]
     fn parses_rfc2617() {
-        let r = CredentialsRef::parse(RFC2617).unwrap();
+        let r = CredentialsRef::parse(RFC2617).unwrap().unwrap();
         assert_eq!(r.username(), Username::Plain("Mufasa"));
         assert_eq!(r.realm(), "testrealm@host.com");
         assert_eq!(r.nonce(), "dcd98b7102dd2f0e8b11d0f600bfb0c093");
@@ -292,13 +300,48 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn sources() {
+        // A different scheme.
+        assert!(CredentialsRef::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").is_none());
+        assert!(CredentialsRef::parse("Bearer junk").is_none());
+
+        // Invalid syntax is malformed regardless of scheme.
+        assert_eq!(
+            CredentialsRef::parse("Bearer a b").unwrap().unwrap_err(),
+            ServerError::Malformed("invalid credentials syntax")
+        );
+
+        // Already parsed.
+        let c = crate::parse_credentials(RFC2617).unwrap();
+        let r = CredentialsRef::parse(&c).unwrap().unwrap();
+        assert_eq!(r.username(), Username::Plain("Mufasa"));
+        #[cfg(feature = "basic-scheme")]
+        assert!(crate::basic::Credentials::parse(&c).is_none());
+
+        #[cfg(feature = "http10")]
+        {
+            let v = http::HeaderValue::from_static(RFC2617);
+            let r = CredentialsRef::parse(&v).unwrap().unwrap();
+            assert_eq!(r.username(), Username::Plain("Mufasa"));
+            let v = http::HeaderValue::from_bytes(b"Digest username=\"\xe4\"").unwrap();
+            assert_eq!(
+                CredentialsRef::parse(&v).unwrap().unwrap_err(),
+                ServerError::Malformed("invalid credentials syntax")
+            );
+        }
+    }
+
+    #[test]
     fn username_star() {
         let utf8 = RFC2617.replace(
             "username=\"Mufasa\"",
             "username*=UTF-8''J%C3%A4s%C3%B8n%20Doe",
         );
         assert_eq!(
-            CredentialsRef::parse(&utf8).unwrap().username(),
+            CredentialsRef::parse(utf8.as_str())
+                .unwrap()
+                .unwrap()
+                .username(),
             Username::Plain("J\u{e4}s\u{f8}n Doe")
         );
         let latin1 = RFC2617.replace(
@@ -306,7 +349,10 @@ pub(crate) mod tests {
             "username*=iso-8859-1'en'J%E4s%F8n%20Doe",
         );
         assert_eq!(
-            CredentialsRef::parse(&latin1).unwrap().username(),
+            CredentialsRef::parse(latin1.as_str())
+                .unwrap()
+                .unwrap()
+                .username(),
             Username::Plain("J\u{e4}s\u{f8}n Doe")
         );
     }
@@ -321,7 +367,7 @@ pub(crate) mod tests {
                 .replace("nc=00000001", "nc=\"0000000A\"")
                 .replace("opaque=", "algorithm=md5, foo=bar, opaque=")
         );
-        let r = CredentialsRef::parse(&s).unwrap();
+        let r = CredentialsRef::parse(s.as_str()).unwrap().unwrap();
         assert_eq!((r.nc(), r.nc_hex()), (10, "0000000A"));
         assert_eq!(r.algorithm(), Algorithm::Md5);
         assert_eq!(r.qop(), Qop::Auth);
@@ -331,17 +377,19 @@ pub(crate) mod tests {
             "username=\"ABCDEF0123456789ABCDEF0123456789\", userhash=true",
         );
         assert_eq!(
-            CredentialsRef::parse(&s).unwrap().username(),
+            CredentialsRef::parse(s.as_str())
+                .unwrap()
+                .unwrap()
+                .username(),
             Username::Hashed("abcdef0123456789abcdef0123456789")
         );
     }
 
     #[test]
     fn errors() {
-        use ServerError::{Malformed, WrongScheme};
+        use ServerError::Malformed;
         let r = |from: &str, to: &str| RFC2617.replace(from, to);
         let cases: Vec<(String, ServerError)> = vec![
-            ("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==".into(), WrongScheme),
             ("Digest abc".into(), Malformed("expected auth-params")),
             (r("qop=auth, ", ""), Malformed("missing qop")),
             (
@@ -394,7 +442,7 @@ pub(crate) mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(
-                CredentialsRef::parse(&input).unwrap_err(),
+                CredentialsRef::parse(input.as_str()).unwrap().unwrap_err(),
                 expected,
                 "{:?}",
                 input

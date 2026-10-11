@@ -9,7 +9,7 @@ use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 
 use crate::render::HeaderWriter;
-use crate::server::{check_realm, parse_scheme, Challenge, ConfigError, ServerError};
+use crate::server::{check_realm, Challenge, ConfigError, CredentialsSource, ServerError};
 use crate::AuthBodyRef;
 
 /// Builds a `Basic` challenge.
@@ -24,7 +24,7 @@ use crate::AuthBodyRef;
 ///     challenge.as_str(),
 ///     r#"Basic realm="WallyWorld", charset="UTF-8""#,
 /// );
-/// let creds = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
+/// let creds = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap().unwrap();
 /// assert_eq!(creds.username(), "Aladdin");
 /// assert!(creds.verify_password("open sesame"));
 /// # Ok::<(), http_auth::ConfigError>(())
@@ -83,9 +83,17 @@ impl Credentials {
     /// *   `user-pass` is split at the first `:`; a missing colon is an error.
     /// *   Control characters are rejected.
     /// *   The decoded octets must be UTF-8.
-    pub fn parse(header_value: &str) -> Result<Self, ServerError> {
-        let c = parse_scheme(header_value, "Basic")?;
-        let AuthBodyRef::Token68(encoded) = c.body else {
+    ///
+    /// Returns `None` if `source` uses another scheme. See
+    /// [`CredentialsSource`] for accepted sources, including how to accept
+    /// more than one scheme.
+    pub fn parse<'i, S: CredentialsSource<'i>>(source: S) -> Option<Result<Self, ServerError>> {
+        source.parse_scheme("Basic", Self::from_body)
+    }
+
+    /// Parses the body of credentials already known to use `Basic`.
+    fn from_body(body: &AuthBodyRef<'_>) -> Result<Self, ServerError> {
+        let &AuthBodyRef::Token68(encoded) = body else {
             return Err(ServerError::Malformed("expected token68"));
         };
         let decoded = base64::engine::general_purpose::STANDARD
@@ -136,22 +144,30 @@ mod tests {
     #[test]
     fn rfc7617_examples() {
         // RFC 7617 section 2.
-        let c = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
+        let c = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
+            .unwrap()
+            .unwrap();
         assert_eq!(c.username(), "Aladdin");
         assert_eq!(c.password(), "open sesame");
         assert!(c.verify_password("open sesame"));
         assert!(!c.verify_password("open sesame!"));
         // RFC 7617 section 2.1: UTF-8 user-pass "test:123£".
-        let c = Credentials::parse("Basic dGVzdDoxMjPCow==").unwrap();
+        let c = Credentials::parse("Basic dGVzdDoxMjPCow==")
+            .unwrap()
+            .unwrap();
         assert_eq!((c.username(), c.password()), ("test", "123\u{a3}"));
         // Surrounding OWS and lowercase scheme.
-        let c = Credentials::parse("  basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==\t").unwrap();
+        let c = Credentials::parse("  basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==\t")
+            .unwrap()
+            .unwrap();
         assert_eq!(c.username(), "Aladdin");
         // Text after the first colon is part of the password (base64 of "user:pa:ss").
-        let c = Credentials::parse("Basic dXNlcjpwYTpzcw==").unwrap();
+        let c = Credentials::parse("Basic dXNlcjpwYTpzcw==")
+            .unwrap()
+            .unwrap();
         assert_eq!((c.username(), c.password()), ("user", "pa:ss"));
         // Empty user-id and password (base64 of ":").
-        let c = Credentials::parse("Basic Og==").unwrap();
+        let c = Credentials::parse("Basic Og==").unwrap().unwrap();
         assert_eq!((c.username(), c.password()), ("", ""));
         // Debug redacts the password.
         let d = format!("{:?}", c);
@@ -160,9 +176,9 @@ mod tests {
 
     #[test]
     fn parse_errors() {
-        use ServerError::{Malformed, WrongScheme};
+        use ServerError::Malformed;
+        assert!(Credentials::parse("Digest username=\"x\"").is_none());
         let cases: &[(&str, ServerError)] = &[
-            ("Digest username=\"x\"", WrongScheme),
             (
                 "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ",
                 Malformed("invalid base64"),
@@ -175,7 +191,7 @@ mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(
-                Credentials::parse(input).unwrap_err(),
+                Credentials::parse(*input).unwrap().unwrap_err(),
                 *expected,
                 "{:?}",
                 input

@@ -38,6 +38,12 @@
     `PasswordClientBuilder::with` also accepts a `&Challenge`. With `http10`,
     `ServerError::status_code`, `From<Challenge> for http::HeaderValue`, and
     `digest::Request` from `&http::Request<B>` / `&http::request::Parts`.
+    `basic::Credentials::parse` and `digest::CredentialsRef::parse` accept
+    a `&str`, an already-parsed `&CredentialsRef` (so a server accepting
+    more than one scheme parses once), or with `http10` an
+    `&http::HeaderValue`, via the sealed `CredentialsSource` trait; they
+    return `None` for another scheme. `ServerError` implements
+    `From<parser::Error>`.
 *   `parse_credentials` and `CredentialsRef` for `Authorization` /
     `Proxy-Authorization` values.
 *   `impl Display for ChallengeRef`.

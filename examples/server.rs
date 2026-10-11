@@ -1,13 +1,14 @@
 // Copyright (C) 2026 Scott Lamb <slamb@slamb.org>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! A hyper server protecting `/basic` with `Basic` and `/digest` with
-//! `Digest`.
+//! A hyper server protecting `/basic` with `Basic`, `/digest` with `Digest`,
+//! and `/both` with either.
 //!
 //! ```text
 //! cargo run --example server --features server,http10
-//! curl --basic  -u aladdin:"open sesame" http://127.0.0.1:8080/basic
-//! curl --digest -u mufasa:"Circle of Life" http://127.0.0.1:8080/digest
+//! curl --basic   -u aladdin:"open sesame" http://127.0.0.1:8080/basic
+//! curl --digest  -u mufasa:"Circle of Life" http://127.0.0.1:8080/digest
+//! curl --anyauth -u mufasa:"Circle of Life" http://127.0.0.1:8080/both
 //! ```
 
 use std::convert::Infallible;
@@ -70,18 +71,11 @@ fn main() {
 }
 
 fn handle(servers: &Servers, req: Request<Incoming>) -> Response<Empty<Bytes>> {
-    let authorization = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-    let (status, challenges) = match (req.uri().path(), authorization) {
-        ("/basic", Some(a)) => verify_basic(&servers.basic, a),
-        ("/basic", None) => (StatusCode::UNAUTHORIZED, vec![servers.basic.clone()]),
-        ("/digest", Some(a)) => verify_digest(&servers.digest, a, &req),
-        ("/digest", None) => (
-            StatusCode::UNAUTHORIZED,
-            to_header_values(servers.digest.challenges(false, SystemTime::now())),
-        ),
+    let authorization = req.headers().get(AUTHORIZATION);
+    let (status, challenges) = match req.uri().path() {
+        "/basic" => verify_basic(&servers.basic, authorization),
+        "/digest" => verify_digest(&servers.digest, authorization, &req),
+        "/both" => verify_both(servers, authorization, &req),
         _ => (StatusCode::NOT_FOUND, vec![]),
     };
     let mut resp = Response::builder().status(status);
@@ -95,50 +89,101 @@ fn to_header_values(challenges: Vec<http_auth::Challenge>) -> Vec<HeaderValue> {
     challenges.into_iter().map(HeaderValue::from).collect()
 }
 
-fn verify_basic(challenge: &HeaderValue, header: &str) -> (StatusCode, Vec<HeaderValue>) {
-    let outcome = basic::Credentials::parse(header).and_then(|c| {
-        if c.username() == "aladdin" && c.verify_password("open sesame") {
-            Ok(())
-        } else {
-            Err(ServerError::BadCredentials)
-        }
-    });
-    match outcome {
-        Ok(()) => (StatusCode::OK, vec![]),
-        Err(e) => (e.status_code(), vec![challenge.clone()]),
-    }
-}
-
-/// Looks up a user's secret; `None` if there's no such user.
-fn lookup(username: digest::Username<'_>) -> Option<Secret<'static>> {
+/// Looks up a user's password; `None` if there's no such user.
+fn password(username: &str) -> Option<&'static str> {
     match username {
-        digest::Username::Plain("mufasa") => Some(Secret::Password {
-            username: "mufasa",
-            password: "Circle of Life",
-        }),
+        "aladdin" => Some("open sesame"),
+        "mufasa" => Some("Circle of Life"),
         _ => None,
     }
 }
 
+fn check_basic(c: &basic::Credentials) -> Result<(), ServerError> {
+    match password(c.username()) {
+        Some(p) if c.verify_password(p) => Ok(()),
+        _ => Err(ServerError::BadCredentials),
+    }
+}
+
+fn check_digest(
+    server: &digest::Server,
+    c: digest::CredentialsRef<'_>,
+    req: &Request<Incoming>,
+    now: SystemTime,
+) -> Result<(), ServerError> {
+    let c = server.check_nonce(c, now)?;
+    let secret = match c.username() {
+        digest::Username::Plain(username) => {
+            password(username).map(|password| Secret::Password { username, password })
+        }
+        _ => None,
+    };
+    server.verify(&c, req.into(), secret)
+}
+
+// Each `verify_*` gets an `outcome` of `None` if there are no credentials of
+// an accepted scheme, `Some(Err(_))` if they're rejected.
+
+fn verify_basic(
+    challenge: &HeaderValue,
+    authorization: Option<&HeaderValue>,
+) -> (StatusCode, Vec<HeaderValue>) {
+    let outcome = authorization
+        .and_then(basic::Credentials::parse)
+        .map(|c| check_basic(&c?));
+    let status = match outcome {
+        Some(Ok(())) => return (StatusCode::OK, vec![]),
+        Some(Err(e)) => e.status_code(),
+        None => StatusCode::UNAUTHORIZED,
+    };
+    (status, vec![challenge.clone()])
+}
+
 fn verify_digest(
     server: &digest::Server,
-    header: &str,
+    authorization: Option<&HeaderValue>,
     req: &Request<Incoming>,
 ) -> (StatusCode, Vec<HeaderValue>) {
     let now = SystemTime::now();
-    let outcome = digest::CredentialsRef::parse(header).and_then(|r| {
-        let r = server.check_nonce(r, now)?;
-        server.verify(&r, req.into(), lookup(r.username()))
-    });
-    match outcome {
-        Ok(()) => (StatusCode::OK, vec![]),
-        Err(ServerError::Stale) => (
-            StatusCode::UNAUTHORIZED,
-            to_header_values(server.challenges(true, now)),
-        ),
-        Err(e) => (
-            e.status_code(),
-            to_header_values(server.challenges(false, now)),
-        ),
-    }
+    let outcome = authorization
+        .and_then(digest::CredentialsRef::parse)
+        .map(|c| check_digest(server, c?, req, now));
+    let (status, stale) = match outcome {
+        Some(Ok(())) => return (StatusCode::OK, vec![]),
+        Some(Err(e)) => (e.status_code(), e == ServerError::Stale),
+        None => (StatusCode::UNAUTHORIZED, false),
+    };
+    (status, to_header_values(server.challenges(stale, now)))
+}
+
+/// Accepts either scheme, parsing the header once and dispatching on the
+/// scheme the client chose.
+fn verify_both(
+    servers: &Servers,
+    authorization: Option<&HeaderValue>,
+    req: &Request<Incoming>,
+) -> (StatusCode, Vec<HeaderValue>) {
+    let now = SystemTime::now();
+    let outcome = match authorization.map(HeaderValue::to_str) {
+        None => None,
+        Some(Err(_)) => Some(Err(ServerError::Malformed("invalid credentials syntax"))),
+        Some(Ok(a)) => match http_auth::parse_credentials(a) {
+            Err(e) => Some(Err(e.into())),
+            Ok(c) => basic::Credentials::parse(&c)
+                .map(|b| check_basic(&b?))
+                .or_else(|| {
+                    digest::CredentialsRef::parse(&c)
+                        .map(|d| check_digest(&servers.digest, d?, req, now))
+                }),
+        },
+    };
+    let (status, stale) = match outcome {
+        Some(Ok(())) => return (StatusCode::OK, vec![]),
+        Some(Err(e)) => (e.status_code(), e == ServerError::Stale),
+        None => (StatusCode::UNAUTHORIZED, false),
+    };
+    // Offer both schemes; clients pick the strongest they support.
+    let mut challenges = to_header_values(servers.digest.challenges(stale, now));
+    challenges.push(servers.basic.clone());
+    (status, challenges)
 }

@@ -39,7 +39,10 @@ algorithm. The secret is `Secret::Ha1(&Ha1)` (an `Ha1` carries its algorithm;
 same work as a wrong password, so timing doesn't reveal which users exist.
 `basic::ChallengeBuilder::new(realm)` builds the unchanging `Basic` challenge
 once, validating the realm; `basic::Credentials::parse` and `verify_password`
-complete the `Basic` server.
+complete the `Basic` server. Both schemes' `parse` take a `&str`, an
+already-parsed `&CredentialsRef`, or (with `http10`) an `&http::HeaderValue`,
+via the sealed `CredentialsSource` trait, and return `None` for another scheme,
+so a server offering both parses once and tries each.
 
 The nonce is `hex(issued_at_secs:u64be || salt:[u8; 8] || HMAC-SHA256(key,
 issued_at_secs || salt || realm)[..16])`, keyed by `nonce_key` with lifetime
@@ -50,7 +53,7 @@ highest `nc` per `(nonce, cnonce)` for RFC 7616 §5.5.
 
 | Rule | Error |
 |---|---|
-| Parse: scheme `Digest` (case-insensitive) | `WrongScheme` |
+| Parse: scheme `Digest` (case-insensitive) | `None`, not an error |
 | Parse: `response`, `nonce`, `uri`, `realm`, `cnonce`, `nc`, `qop` present; no `token68`; no repeated parameter | `Malformed` |
 | Parse: exactly one of `username` and `username*`; `userhash` usernames hex, lower-cased | `Malformed` |
 | Parse: `username*` valid RFC 8187 `ext-value`, not with `userhash=true` | `Malformed` |
@@ -65,7 +68,7 @@ highest `nc` per `(nonce, cnonce)` for RFC 7616 §5.5.
 | `verify`: `Secret::Ha1` for another algorithm | `SecretMismatch` (500) |
 | `verify`: no secret (unknown user), username or computed `response` (constant-time) mismatch | `BadCredentials` |
 | `verify`: nonce authentic but expired, everything else valid | `Stale` |
-| `basic::Credentials::parse` (RFC 7617 §2): scheme, token68 base64, `:` split, CTLs, UTF-8 | `Malformed` / `WrongScheme` |
+| `basic::Credentials::parse` (RFC 7617 §2): scheme (`None` if not `Basic`), token68 base64, `:` split, CTLs, UTF-8 | `Malformed` |
 
 Builders and `Ha1::from_hex` return `ConfigError`, separate from the
 per-request `ServerError`.
@@ -79,8 +82,8 @@ Failure details go to logs only.
 ## Features and compatibility
 
 `server` gates server code; needs `basic-scheme` and/or `digest-scheme`; adds
-`hmac`, `subtle`. Every feature combination and `--no-default-features` builds;
-MSRV stays 1.70. With `http10`, a `Challenge` converts to an
+`hmac`, `sha2`, `subtle`. Every feature combination and `--no-default-features`
+builds; MSRV stays 1.70. With `http10`, a `Challenge` converts to an
 `http::HeaderValue`, and a `digest::Request` from an `http::Request` or
 `http::request::Parts`. 0.2 changes are in [CHANGELOG](../CHANGELOG.md).
 

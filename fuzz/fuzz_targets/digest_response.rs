@@ -11,7 +11,7 @@ use libfuzzer_sys::fuzz_target;
 use http_auth::digest::{self, Algorithm, Ha1, Qop, Request, Secret};
 
 fuzz_target!(|data: &str| {
-    let Ok(r) = digest::CredentialsRef::parse(data) else {
+    let Some(Ok(r)) = digest::CredentialsRef::parse(data) else {
         return;
     };
     let server = digest::Server::builder("r", &[Algorithm::Md5, Algorithm::Sha256])
@@ -21,7 +21,7 @@ fuzz_target!(|data: &str| {
         .build()
         .unwrap();
     let _ = server.check_nonce(r, std::time::SystemTime::now());
-    let Ok(r) = digest::CredentialsRef::parse(data) else {
+    let Some(Ok(r)) = digest::CredentialsRef::parse(data) else {
         return;
     };
     let r = r.nonce_checked_externally();

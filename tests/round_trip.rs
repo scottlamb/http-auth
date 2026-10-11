@@ -58,7 +58,7 @@ fn check(rng: &mut Rng, algorithm: Algorithm, session: bool, qop: QopSet, userha
         assert!(header.contains("username*="), "{} {:?}", ctx, header);
     }
     let request = Request { method: "POST", uri: "/x?y=1", body };
-    let response = server.check_nonce(digest::CredentialsRef::parse(&header).expect(&ctx), now).expect(&ctx);
+    let response = server.check_nonce(digest::CredentialsRef::parse(header.as_str()).expect(&ctx).expect(&ctx), now).expect(&ctx);
     let pw = Some(Secret::Password { username: &username, password: &password });
     assert_eq!(server.verify(&response, request, pw), Ok(()), "{}", ctx);
     assert_eq!(server.verify(&response, request, Some(Secret::Ha1(&algorithm.ha1(&username, &realm, &password)))), Ok(()), "{}", ctx);
@@ -117,7 +117,9 @@ fn basic_round_trip() {
         ));
         let parsed = parse_challenges(challenge.as_str()).unwrap();
         let client = basic::Client::try_from(&parsed[0]).unwrap();
-        let creds = basic::Credentials::parse(&client.respond(&username, &password)).unwrap();
+        let creds = basic::Credentials::parse(client.respond(&username, &password).as_str())
+            .unwrap()
+            .unwrap();
         assert_eq!(
             (creds.username(), creds.password()),
             (&username[..], &password[..])

@@ -169,8 +169,11 @@ impl std::fmt::Debug for Secret<'_> {
 /// # };
 ///
 /// // On a request with an `Authorization` header:
-/// let response = CredentialsRef::parse(&header)?;
-/// let response = server.check_nonce(response, SystemTime::now())?;
+/// let Some(response) = CredentialsRef::parse(header.as_str()) else {
+///     // Another scheme: respond 401 with challenges as above.
+///     return Ok(());
+/// };
+/// let response = server.check_nonce(response?, SystemTime::now())?;
 /// // Look up the user here (possibly with .await); `None` if unknown.
 /// assert_eq!(response.username(), Username::Plain("Mufasa"));
 /// let secret = Some(Secret::Password { username: "Mufasa", password: "Circle of Life" });
@@ -496,7 +499,9 @@ mod tests {
         request: Request<'_>,
         secret: Option<Secret<'_>>,
     ) -> Result<(), ServerError> {
-        let r = CredentialsRef::parse(header)?.nonce_checked_externally();
+        let r = CredentialsRef::parse(header)
+            .unwrap()?
+            .nonce_checked_externally();
         server.verify(&r, request, secret)
     }
 
@@ -696,17 +701,17 @@ mod tests {
             "0".repeat(32)
         );
         #[rustfmt::skip]
-        assert!(!s.check_nonce(CredentialsRef::parse(&header).unwrap(), t0).unwrap().stale());
+        assert!(!s.check_nonce(CredentialsRef::parse(header.as_str()).unwrap().unwrap(), t0).unwrap().stale());
         assert!(s
             .check_nonce(
-                CredentialsRef::parse(&header).unwrap(),
+                CredentialsRef::parse(header.as_str()).unwrap().unwrap(),
                 t0 + Duration::from_secs(301)
             )
             .unwrap()
             .stale());
         let other = Server::builder("r", &[Algorithm::Md5]).build().unwrap();
         #[rustfmt::skip]
-        assert_eq!(other.check_nonce(CredentialsRef::parse(&header).unwrap(), t0).unwrap_err(), ServerError::BadNonce);
+        assert_eq!(other.check_nonce(CredentialsRef::parse(header.as_str()).unwrap().unwrap(), t0).unwrap_err(), ServerError::BadNonce);
     }
 
     #[test]
@@ -732,7 +737,10 @@ mod tests {
                 })
                 .unwrap();
             let r = s
-                .check_nonce(CredentialsRef::parse(&header).unwrap(), later)
+                .check_nonce(
+                    CredentialsRef::parse(header.as_str()).unwrap().unwrap(),
+                    later,
+                )
                 .unwrap();
             assert_eq!(s.verify(&r, get("/x"), pw("u", "p")), Err(expected));
         }

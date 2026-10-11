@@ -120,11 +120,11 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
     let now = SystemTime::now();
     match &config.scheme {
         Scheme::Basic(challenge) => {
-            let a = match authorization {
-                Some(a) => a,
+            let c = match authorization.and_then(basic::Credentials::parse) {
+                Some(c) => c,
                 None => return (401, vec![challenge.clone()]),
             };
-            let outcome = basic::Credentials::parse(a).and_then(|c| {
+            let outcome = c.and_then(|c| {
                 if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(ServerError::BadCredentials) }
             });
             log.outcomes.push(outcome.clone());
@@ -134,14 +134,14 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
             }
         }
         Scheme::Digest(server) => {
-            let a = match authorization {
-                Some(a) => a,
+            let r = match authorization.and_then(digest::CredentialsRef::parse) {
+                Some(r) => r,
                 None => {
                     let issued = if config.issue_stale_first && log.requests == 1 { now - Duration::from_secs(3600) } else { now };
                     return (401, server.challenges(false, issued));
                 }
             };
-            let outcome = digest::CredentialsRef::parse(a).and_then(|r| {
+            let outcome = r.and_then(|r| {
                 log.algorithms.push(r.algorithm());
                 log.sessions.push(r.session());
                 log.userhashes.push(matches!(r.username(), Username::Hashed(_)));

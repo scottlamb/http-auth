@@ -53,9 +53,6 @@ impl From<Challenge> for http::HeaderValue {
 #[non_exhaustive]
 #[allow(clippy::module_name_repetitions)] // used via the crate root.
 pub enum ServerError {
-    /// The credentials use a different scheme.
-    WrongScheme,
-
     /// The credentials are syntactically invalid; the string says why.
     Malformed(&'static str),
 
@@ -103,8 +100,7 @@ impl ServerError {
     pub fn status(&self) -> u16 {
         match self {
             ServerError::Malformed(_) | ServerError::UriMismatch => 400,
-            ServerError::WrongScheme
-            | ServerError::BadNonce
+            ServerError::BadNonce
             | ServerError::Stale
             | ServerError::WrongRealm
             | ServerError::UnofferedAlgorithm
@@ -127,7 +123,6 @@ impl ServerError {
 impl std::fmt::Display for ServerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerError::WrongScheme => f.write_str("credentials use a different scheme"),
             ServerError::Malformed(why) => write!(f, "malformed credentials: {}", why),
             ServerError::BadNonce => f.write_str("nonce was not issued by this server"),
             ServerError::Stale => f.write_str("nonce has expired"),
@@ -148,6 +143,13 @@ impl std::fmt::Display for ServerError {
 
 impl std::error::Error for ServerError {}
 
+/// Maps a [`crate::parse_credentials`] failure to [`ServerError::Malformed`].
+impl From<crate::parser::Error<'_>> for ServerError {
+    fn from(_: crate::parser::Error<'_>) -> Self {
+        ServerError::Malformed("invalid credentials syntax")
+    }
+}
+
 /// An invalid value given when configuring a server or challenge, or an
 /// invalid stored secret.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,18 +163,96 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// Parses a scheme's credentials and checks the scheme name.
-pub(crate) fn parse_scheme<'i>(
-    header: &'i str,
-    scheme: &str,
-) -> Result<crate::CredentialsRef<'i>, ServerError> {
-    use crate::parse_credentials;
-    let c = parse_credentials(header)
-        .map_err(|_| ServerError::Malformed("invalid credentials syntax"))?;
-    if !c.scheme.eq_ignore_ascii_case(scheme) {
-        return Err(ServerError::WrongScheme);
+/// `Authorization` or `Proxy-Authorization` credentials to parse with
+/// [`crate::basic::Credentials::parse`] or
+/// [`crate::digest::CredentialsRef::parse`].
+///
+/// This trait is sealed; it's implemented for the following types:
+///
+/// *   `&str`: an unparsed header value. Use `.as_str()` to pass a `String`.
+/// *   [`crate::CredentialsRef`]: credentials already parsed via
+///     [`crate::parse_credentials`]. A server accepting more than one scheme
+///     can parse once and try each:
+///
+///     ```rust
+///     # #[cfg(all(feature = "basic-scheme", feature = "digest-scheme"))] {
+///     use http_auth::{basic, digest};
+///     let c = http_auth::parse_credentials("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==")?;
+///     if let Some(b) = basic::Credentials::parse(&c) {
+///         assert_eq!(b?.username(), "Aladdin");
+///     } else if let Some(d) = digest::CredentialsRef::parse(&c) {
+///         // ...
+///     #   unreachable!();
+///     } else {
+///         // Another scheme: respond 401 with challenges, as with no
+///         // credentials at all.
+///     }
+///     # }
+///     # Ok::<(), http_auth::ServerError>(())
+///     ```
+///
+/// *   [`http::HeaderValue`] (with the `http10` feature): an unparsed header
+///     value.
+///
+/// Callers don't need to import this trait to use the `parse` functions.
+pub trait CredentialsSource<'i>: sealed::Sealed<'i> {}
+
+pub(crate) mod sealed {
+    use super::ServerError;
+    use crate::AuthBodyRef;
+
+    pub trait Sealed<'i> {
+        /// Returns `None` if the credentials use a scheme other than
+        /// `scheme`, or `f`'s result on their body.
+        fn parse_scheme<R>(
+            self,
+            scheme: &str,
+            f: impl FnOnce(&AuthBodyRef<'i>) -> Result<R, ServerError>,
+        ) -> Option<Result<R, ServerError>>;
     }
-    Ok(c)
+}
+
+impl<'i> CredentialsSource<'i> for &'i str {}
+impl<'i> sealed::Sealed<'i> for &'i str {
+    fn parse_scheme<R>(
+        self,
+        scheme: &str,
+        f: impl FnOnce(&crate::AuthBodyRef<'i>) -> Result<R, ServerError>,
+    ) -> Option<Result<R, ServerError>> {
+        match crate::parse_credentials(self) {
+            Ok(c) => (&c).parse_scheme(scheme, f),
+            Err(e) => Some(Err(e.into())),
+        }
+    }
+}
+
+impl<'i> CredentialsSource<'i> for &crate::CredentialsRef<'i> {}
+impl<'i> sealed::Sealed<'i> for &crate::CredentialsRef<'i> {
+    fn parse_scheme<R>(
+        self,
+        scheme: &str,
+        f: impl FnOnce(&crate::AuthBodyRef<'i>) -> Result<R, ServerError>,
+    ) -> Option<Result<R, ServerError>> {
+        self.scheme()
+            .eq_ignore_ascii_case(scheme)
+            .then(|| f(self.body()))
+    }
+}
+
+#[cfg(feature = "http10")]
+impl<'i> CredentialsSource<'i> for &'i http::HeaderValue {}
+#[cfg(feature = "http10")]
+impl<'i> sealed::Sealed<'i> for &'i http::HeaderValue {
+    fn parse_scheme<R>(
+        self,
+        scheme: &str,
+        f: impl FnOnce(&crate::AuthBodyRef<'i>) -> Result<R, ServerError>,
+    ) -> Option<Result<R, ServerError>> {
+        match self.to_str() {
+            Ok(s) => s.parse_scheme(scheme, f),
+            Err(_) => Some(Err(ServerError::Malformed("invalid credentials syntax"))),
+        }
+    }
 }
 
 /// Validates a realm value.
