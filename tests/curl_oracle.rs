@@ -128,7 +128,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
             let outcome = basic::Credentials::parse(a).and_then(|c| {
                 if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(server::Error::BadCredentials) }
             });
-            log.outcomes.push(outcome);
+            log.outcomes.push(outcome.clone());
             match outcome {
                 Ok(()) => (200, vec![]),
                 Err(e) => (e.status(), vec![server.challenge()]),
@@ -153,7 +153,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
                 let secret = if config.use_ha1 { Secret::Ha1(&ha1) } else { Secret::Password { username: config.username, password: config.password } };
                 server.verify(&r, Request { method, uri, body: Some(body) }, secret)
             });
-            log.outcomes.push(outcome);
+            log.outcomes.push(outcome.clone());
             match outcome {
                 Ok(()) => (200, vec![]),
                 Err(server::Error::Stale) => (401, server.challenges(true, now)),

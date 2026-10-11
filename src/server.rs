@@ -32,7 +32,7 @@ impl From<Challenge> for http::HeaderValue {
 }
 
 /// Why a server rejected credentials, or why a server couldn't be configured.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// The credentials use a different scheme.
