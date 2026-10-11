@@ -47,8 +47,8 @@ fn check(rng: &mut Rng, algorithm: Algorithm, session: bool, qop: QopSet, userha
     let username = rng.word(ANY);
     let password = rng.word(ANY);
     let ctx = format!("{:?} s={} q={:?} uh={} body={:?}", algorithm, session, qop, userhash, body);
-    let server = digest::Server::builder(realm.clone())
-        .algorithms(&[algorithm]).session(session).qop(qop).userhash(userhash).opaque("op").build().unwrap();
+    let server = digest::Server::builder(realm.clone(), &[algorithm])
+        .session(session).qop(qop).userhash(userhash).opaque("op").build().unwrap();
     let challenge = server.challenges(false, now)[0].as_str().to_owned();
     assert_eq!(challenge.contains("userhash=true"), userhash, "{}", ctx);
     let mut client = digest::Client::try_from(&parse_challenges(&challenge).unwrap()[0]).unwrap();

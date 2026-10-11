@@ -202,9 +202,7 @@ fn run_digest(config: Config, user_pass: &str) -> (u16, Arc<Mutex<Log>>) {
 }
 
 fn server(algorithms: &[Algorithm]) -> digest::ServerBuilder {
-    digest::Server::builder(REALM)
-        .algorithms(algorithms)
-        .opaque("opaque-value")
+    digest::Server::builder(REALM, algorithms).opaque("opaque-value")
 }
 
 #[rustfmt::skip]
@@ -253,7 +251,7 @@ fn digest_options() {
         (server(&[Algorithm::Sha256]), "Mufasa:Circle of Life", true, 200, None),
         (server(&[Algorithm::Sha256]).userhash(true), "Mufasa:Circle of Life", false, 200, Some(userhash)),
         (server(&[Algorithm::Md5]).qop(Qop::AuthInt.into()), "Mufasa:Circle of Life", false, 200, Some(auth_int)),
-        (digest::Server::builder(r#"a "quoted" \ realm"#), "Mufasa:Circle of Life", false, 200, None),
+        (digest::Server::builder(r#"a "quoted" \ realm"#, &[Algorithm::Md5]), "Mufasa:Circle of Life", false, 200, None),
     ];
     for (builder, user_pass, use_ha1, expected_status, check) in cases {
         let mut config = Config::digest(builder.build().unwrap());

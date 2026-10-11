@@ -33,10 +33,12 @@ struct Servers {
 fn main() {
     let servers = Arc::new(Servers {
         basic: basic::ChallengeBuilder::new("WallyWorld").build().unwrap(),
-        digest: digest::Server::builder("http-auth@example.org")
-            .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
-            .build()
-            .unwrap(),
+        digest: digest::Server::builder(
+            "http-auth@example.org",
+            &[Algorithm::Sha256, Algorithm::Md5],
+        )
+        .build()
+        .unwrap(),
     });
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_io()

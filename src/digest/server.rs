@@ -64,8 +64,7 @@ impl std::fmt::Debug for Secret<'_> {
 /// use std::time::SystemTime;
 /// use http_auth::digest::{Algorithm, CredentialsRef, Server, Request, Secret, Username};
 ///
-/// let server = Server::builder("cams@example.com")
-///     .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
+/// let server = Server::builder("cams@example.com", &[Algorithm::Sha256, Algorithm::Md5])
 ///     .build()?;
 ///
 /// // Without credentials, respond 401 with one `WWW-Authenticate` header per challenge.
@@ -115,13 +114,6 @@ pub struct Server {
 pub struct ServerBuilder(Server);
 
 impl ServerBuilder {
-    /// Algorithms to offer, most preferred first; one challenge is issued per
-    /// algorithm. Default: `[Md5]`.
-    pub fn algorithms(mut self, algorithms: &[Algorithm]) -> Self {
-        self.0.algorithms = algorithms.to_vec();
-        self
-    }
-
     /// Offers the `-sess` variants instead. Default: `false`.
     pub fn session(mut self, session: bool) -> Self {
         self.0.session = session;
@@ -205,11 +197,18 @@ impl ServerBuilder {
 }
 
 impl Server {
-    /// Starts building a server for the given realm.
-    pub fn builder(realm: impl Into<String>) -> ServerBuilder {
+    /// Starts building a server for the given realm, offering `algorithms`
+    /// (non-empty, most preferred first). One challenge is issued per
+    /// algorithm.
+    ///
+    /// Offering [`Algorithm::Md5`] alongside stronger algorithms allows
+    /// downgrade ([RFC 7616 section
+    /// 5.6](https://datatracker.ietf.org/doc/html/rfc7616#section-5.6)), but
+    /// some clients support only `MD5`.
+    pub fn builder(realm: impl Into<String>, algorithms: &[Algorithm]) -> ServerBuilder {
         ServerBuilder(Server {
             realm: realm.into().into_boxed_str(),
-            algorithms: vec![Algorithm::Md5],
+            algorithms: algorithms.to_vec(),
             session: false,
             qop: Qop::Auth.into(),
             userhash: false,
@@ -379,7 +378,8 @@ mod tests {
     }
 
     fn b() -> ServerBuilder {
-        Server::builder("testrealm@host.com").opaque("5ccc069c403ebaf9f0171e9517f40e41")
+        Server::builder("testrealm@host.com", &[Algorithm::Md5])
+            .opaque("5ccc069c403ebaf9f0171e9517f40e41")
     }
 
     fn s() -> Server {
@@ -423,18 +423,19 @@ mod tests {
 
     #[test]
     fn rfc7616_3_9() {
-        let s = Server::builder("http-auth@example.org")
-            .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
-            .qop(Qop::Auth | Qop::AuthInt)
-            .opaque("FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS")
-            .build()
-            .unwrap();
+        let s = Server::builder(
+            "http-auth@example.org",
+            &[Algorithm::Sha256, Algorithm::Md5],
+        )
+        .qop(Qop::Auth | Qop::AuthInt)
+        .opaque("FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS")
+        .build()
+        .unwrap();
         let secret = pw("Mufasa", "Circle of Life");
         for header in [RFC7616_SHA256, RFC7616_MD5] {
             assert_eq!(verify(&s, header, get("/dir/index.html"), secret), Ok(()));
         }
-        let builder = Server::builder("api@example.org")
-            .algorithms(&[Algorithm::Sha512_256])
+        let builder = Server::builder("api@example.org", &[Algorithm::Sha512_256])
             .opaque("HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS");
         let s = builder.clone().userhash(true).build().unwrap();
         let user = "J\u{e4}s\u{f8}n Doe";
@@ -452,9 +453,12 @@ mod tests {
         let s = s();
         let ok = get("/dir/index.html");
         let r = |from: &str, to: &str| RFC2617.replace(from, to);
-        let sha = b().algorithms(&[Algorithm::Sha256]).build().unwrap();
+        let sha = Server::builder("testrealm@host.com", &[Algorithm::Sha256])
+            .opaque("5ccc069c403ebaf9f0171e9517f40e41")
+            .build()
+            .unwrap();
         let int = b().qop(Qop::AuthInt.into()).build().unwrap();
-        let noop = Server::builder("testrealm@host.com")
+        let noop = Server::builder("testrealm@host.com", &[Algorithm::Md5])
             .qop(Qop::Auth.into())
             .build()
             .unwrap();
@@ -515,8 +519,7 @@ mod tests {
             crate::parse_challenges(c.as_str()).unwrap()[0].body.params().unwrap().iter()
                 .find(|(k, _)| *k == "nonce").unwrap().1.to_unescaped().into_owned()
         };
-        let s = Server::builder("cams@example.com")
-            .algorithms(&[Algorithm::Sha256, Algorithm::Md5])
+        let s = Server::builder("cams@example.com", &[Algorithm::Sha256, Algorithm::Md5])
             .opaque("xyz")
             .userhash(true)
             .build()
@@ -530,7 +533,7 @@ mod tests {
         assert!(s.challenges(true, now)[0]
             .as_str()
             .contains("\", stale=true, algorithm=SHA-256"));
-        let sess = Server::builder("r")
+        let sess = Server::builder("r", &[Algorithm::Md5])
             .session(true)
             .qop(Qop::Auth | Qop::AuthInt)
             .domain(&["/a", "/b"])
@@ -544,12 +547,12 @@ mod tests {
 
     #[test]
     fn builder_errors() {
-        let b = || Server::builder("r");
+        let b = || Server::builder("r", &[Algorithm::Md5]);
         for result in [
-            b().algorithms(&[]).build(),
-            b().algorithms(&[Algorithm::Md5, Algorithm::Md5]).build(),
+            Server::builder("r", &[]).build(),
+            Server::builder("r", &[Algorithm::Md5, Algorithm::Md5]).build(),
             b().qop(QopSet(0)).build(),
-            Server::builder("r\n").build(),
+            Server::builder("r\n", &[Algorithm::Md5]).build(),
             b().opaque("caf\u{e9}").build(),
             b().domain(&["/a\0b"]).build(),
             b().domain(&[""]).build(),
@@ -562,7 +565,7 @@ mod tests {
 
     #[test]
     fn check_nonce_cycle() {
-        let s = Server::builder("r").build().unwrap();
+        let s = Server::builder("r", &[Algorithm::Md5]).build().unwrap();
         let t0 = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let nonce = nonce::issue(&s.nonce_key.0, "r", t0, [1; 8]);
         let header = format!(
@@ -579,7 +582,7 @@ mod tests {
             )
             .unwrap()
             .stale());
-        let other = Server::builder("r").build().unwrap();
+        let other = Server::builder("r", &[Algorithm::Md5]).build().unwrap();
         #[rustfmt::skip]
         assert_eq!(other.check_nonce(CredentialsRef::parse(&header).unwrap(), t0).unwrap_err(), ServerError::BadNonce);
     }
@@ -587,7 +590,7 @@ mod tests {
     #[test]
     fn stale() {
         use std::convert::TryFrom as _;
-        let s = Server::builder("r").build().unwrap();
+        let s = Server::builder("r", &[Algorithm::Md5]).build().unwrap();
         let t0 = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let later = t0 + Duration::from_secs(301);
         let c = &s.challenges(false, t0)[0];
@@ -631,7 +634,10 @@ mod tests {
             d
         );
         assert!(!format!("{:?}", pw("Mufasa", "Circle Of Life")).contains("Circle"));
-        let d = format!("{:?}", Server::builder("r").nonce_key([9; 32]));
+        let d = format!(
+            "{:?}",
+            Server::builder("r", &[Algorithm::Md5]).nonce_key([9; 32])
+        );
         assert!(d.contains("<redacted>") && !d.contains("[9, 9, 9"), "{}", d);
     }
 }

@@ -30,8 +30,9 @@ Option 2: parse, then `digest::Server::check_nonce` (built-in stateless check,
 or `digest::CredentialsRef::nonce_checked_externally` with a caller's store),
 then `verify(&resp, Request { method, uri, body }, secret)`; only a
 `digest::CredentialsRef<NonceChecked>` reaches `verify`.
-`digest::Server::builder(realm)` builds a `Send + Sync` server;
-`challenges(stale, now)` returns one validated `Challenge` per offered
+`digest::Server::builder(realm, algorithms)` builds a `Send + Sync` server;
+there's no default algorithm list, as none suits both modern and legacy
+clients. `challenges(stale, now)` returns one validated `Challenge` per offered
 algorithm. The secret is `Secret::Ha1(&str)` or
 `Secret::Password { username, password }`.
 `basic::ChallengeBuilder::new(realm)` builds the unchanging `Basic` challenge

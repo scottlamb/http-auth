@@ -14,8 +14,7 @@ fuzz_target!(|data: &str| {
     let Ok(r) = digest::CredentialsRef::parse(data) else {
         return;
     };
-    let server = digest::Server::builder("r")
-        .algorithms(&[Algorithm::Md5, Algorithm::Sha256])
+    let server = digest::Server::builder("r", &[Algorithm::Md5, Algorithm::Sha256])
         .qop(Qop::Auth | Qop::AuthInt)
         .userhash(true)
         .nonce_key([0; 32])
