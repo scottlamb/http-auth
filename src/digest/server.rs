@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use super::response::{CredentialsRef, NonceChecked, Unchecked, Username};
 use super::{h_a1, h_a2, is_hex, nonce, nonce::NonceKey, Algorithm, Qop, QopSet};
 use crate::render::{is_quotable, HeaderWriter};
-use crate::server::{check_realm, Challenge, ServerError};
+use crate::server::{check_realm, Challenge, ConfigError, ServerError};
 use subtle::ConstantTimeEq as _;
 
 /// The request being authenticated, as the server received it.
@@ -88,7 +88,7 @@ impl std::fmt::Debug for Secret<'_> {
 ///     Request { method: "GET", uri: "/", body: None },
 ///     Secret::Password { username: "Mufasa", password: "Circle of Life" },
 /// )?;
-/// # Ok::<(), http_auth::ServerError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// ## Security considerations
@@ -171,33 +171,32 @@ impl ServerBuilder {
     }
 
     /// Validates the configuration.
-    pub fn build(self) -> Result<Server, ServerError> {
-        use ServerError::InvalidConfig;
+    pub fn build(self) -> Result<Server, ConfigError> {
         let s = self.0;
         if s.algorithms.is_empty() {
-            return Err(InvalidConfig("no algorithms"));
+            return Err(ConfigError("no algorithms"));
         }
         for (i, a) in s.algorithms.iter().enumerate() {
             if s.algorithms[..i].contains(a) {
-                return Err(InvalidConfig("duplicate algorithm"));
+                return Err(ConfigError("duplicate algorithm"));
             }
         }
         if s.qop.is_empty() {
-            return Err(InvalidConfig("no qop"));
+            return Err(ConfigError("no qop"));
         }
         check_realm(&s.realm)?;
         if s.nonce_lifetime < Duration::from_secs(1) {
-            return Err(InvalidConfig("nonce_lifetime must be at least 1 second"));
+            return Err(ConfigError("nonce_lifetime must be at least 1 second"));
         }
         if let Some(o) = &s.opaque {
             if !is_quotable(o) {
-                return Err(InvalidConfig("opaque must be quotable"));
+                return Err(ConfigError("opaque must be quotable"));
             }
         }
         if let Some(d) = &s.domain {
             for d in d.split(' ') {
                 if d.is_empty() || !d.bytes().all(|b| b.is_ascii_graphic()) {
-                    return Err(InvalidConfig("domain URIs must be non-empty visible ASCII"));
+                    return Err(ConfigError("domain URIs must be non-empty visible ASCII"));
                 }
             }
         }
@@ -557,7 +556,7 @@ mod tests {
             b().nonce_lifetime(Duration::from_millis(999)).build(),
             b().nonce_lifetime(Duration::from_secs(0)).build(),
         ] {
-            assert!(matches!(result, Err(ServerError::InvalidConfig(_))));
+            assert!(result.is_err());
         }
     }
 

@@ -110,7 +110,7 @@ pub use parser::{parse_credentials, ChallengeParser};
     any(feature = "basic-scheme", feature = "digest-scheme")
 ))]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use server::{Challenge, ServerError};
+pub use server::{Challenge, ConfigError, ServerError};
 
 use crate::table::{char_classes, C_ESCAPABLE, C_OWS, C_QDTEXT, C_TCHAR};
 

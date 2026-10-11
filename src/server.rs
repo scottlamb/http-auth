@@ -32,7 +32,7 @@ impl From<Challenge> for http::HeaderValue {
     }
 }
 
-/// Why a server rejected credentials, or why a server couldn't be configured.
+/// Why a server rejected credentials.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 #[allow(clippy::module_name_repetitions)] // used via the crate root.
@@ -76,9 +76,6 @@ pub enum ServerError {
 
     /// Wrong username or password.
     BadCredentials,
-
-    /// A server was configured with an invalid value.
-    InvalidConfig(&'static str),
 }
 
 impl ServerError {
@@ -99,9 +96,7 @@ impl ServerError {
             | ServerError::WrongOpaque
             | ServerError::UnofferedUserhash
             | ServerError::BadCredentials => 401,
-            ServerError::BodyRequired
-            | ServerError::SecretMismatch
-            | ServerError::InvalidConfig(_) => 500,
+            ServerError::BodyRequired | ServerError::SecretMismatch => 500,
         }
     }
 }
@@ -124,12 +119,23 @@ impl std::fmt::Display for ServerError {
                 f.write_str("secret does not fit the response's algorithm")
             }
             ServerError::BadCredentials => f.write_str("wrong username or password"),
-            ServerError::InvalidConfig(why) => write!(f, "invalid server configuration: {}", why),
         }
     }
 }
 
 impl std::error::Error for ServerError {}
+
+/// An invalid value given when configuring a server or challenge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigError(pub(crate) &'static str);
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid configuration: {}", self.0)
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 /// Parses a scheme's credentials and checks the scheme name.
 pub(crate) fn parse_scheme<'i>(
@@ -146,11 +152,11 @@ pub(crate) fn parse_scheme<'i>(
 }
 
 /// Validates a realm value.
-pub(crate) fn check_realm(realm: &str) -> Result<(), ServerError> {
+pub(crate) fn check_realm(realm: &str) -> Result<(), ConfigError> {
     if crate::render::is_quotable(realm) {
         Ok(())
     } else {
-        Err(ServerError::InvalidConfig("realm must be quotable"))
+        Err(ConfigError("realm must be quotable"))
     }
 }
 

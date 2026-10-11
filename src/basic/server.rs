@@ -9,7 +9,7 @@ use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 
 use crate::render::HeaderWriter;
-use crate::server::{check_realm, parse_scheme, Challenge, ServerError};
+use crate::server::{check_realm, parse_scheme, Challenge, ConfigError, ServerError};
 use crate::AuthBodyRef;
 
 /// Issues `Basic` challenges.
@@ -24,7 +24,7 @@ use crate::AuthBodyRef;
 /// let creds = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
 /// assert_eq!(creds.username(), "Aladdin");
 /// assert!(creds.verify_password("open sesame"));
-/// # Ok::<(), http_auth::ServerError>(())
+/// # Ok::<(), http_auth::ConfigError>(())
 /// ```
 ///
 /// `Basic` sends the password in cleartext; use TLS, and store password hashes
@@ -38,9 +38,8 @@ pub struct Server {
 impl Server {
     /// Creates a server for the given realm.
     ///
-    /// Fails with [`ServerError::InvalidConfig`] if the realm isn't printable
-    /// ASCII.
-    pub fn new(realm: impl Into<String>) -> Result<Self, ServerError> {
+    /// Fails with [`ConfigError`] if the realm isn't printable ASCII.
+    pub fn new(realm: impl Into<String>) -> Result<Self, ConfigError> {
         let realm = realm.into();
         check_realm(&realm)?;
         Ok(Self {
@@ -192,13 +191,7 @@ mod tests {
             s.challenge().as_str(),
             r#"Basic realm="a \"b\"", charset="UTF-8""#
         );
-        assert!(matches!(
-            Server::new("caf\u{e9}"),
-            Err(ServerError::InvalidConfig(_))
-        ));
-        assert!(matches!(
-            Server::new("a\nb"),
-            Err(ServerError::InvalidConfig(_))
-        ));
+        assert!(Server::new("caf\u{e9}").is_err());
+        assert!(Server::new("a\nb").is_err());
     }
 }
