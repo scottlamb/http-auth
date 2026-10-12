@@ -1,0 +1,1 @@
+Bearer realm="example", error="invalid_token", error_description="The access token expired"
