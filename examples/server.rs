@@ -99,9 +99,10 @@ fn password(username: &str) -> Option<&'static str> {
 }
 
 fn check_basic(c: &basic::Credentials) -> Result<(), ServerError> {
-    match password(c.username()) {
-        Some(p) if c.verify_password(p) => Ok(()),
-        _ => Err(ServerError::BadCredentials),
+    if c.verify_password(password(c.username())) {
+        Ok(())
+    } else {
+        Err(ServerError::BadCredentials)
     }
 }
 

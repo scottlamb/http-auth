@@ -39,7 +39,7 @@ algorithm. The secret is `Secret::Ha1(&Ha1)` (an `Ha1` carries its algorithm;
 same work as a wrong password, so timing doesn't reveal which users exist.
 `basic::ChallengeBuilder::new(realm)` builds the unchanging `Basic` challenge
 once, validating the realm; `basic::Credentials::parse` and `verify_password`
-complete the `Basic` server. Both schemes' `parse` take a `&str`, an
+(likewise taking `None` for an unknown user) complete the `Basic` server. Both schemes' `parse` take a `&str`, an
 already-parsed `&CredentialsRef`, or (with `http10`) an `&http::HeaderValue`,
 via the sealed `CredentialsSource` trait, and return `None` for another scheme,
 so a server offering both parses once and tries each.

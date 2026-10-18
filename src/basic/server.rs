@@ -26,7 +26,7 @@ use crate::AuthBodyRef;
 /// );
 /// let creds = Credentials::parse("Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap().unwrap();
 /// assert_eq!(creds.username(), "Aladdin");
-/// assert!(creds.verify_password("open sesame"));
+/// assert!(creds.verify_password(Some("open sesame")));
 /// # Ok::<(), http_auth::ConfigError>(())
 /// ```
 ///
@@ -120,11 +120,27 @@ impl Credentials {
         &self.user_pass[self.colon + 1..]
     }
 
-    /// Compares the SHA-256 of the password and of a plaintext `expected`
-    /// value in constant time.
-    pub fn verify_password(&self, expected: &str) -> bool {
+    /// Checks the password against the stored plaintext `expected` password.
+    ///
+    /// This is for servers that keep plaintext passwords, typically to also
+    /// offer `Digest` with `digest::Secret::Password`. Otherwise, store
+    /// slow password hashes
+    /// ([OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html))
+    /// and verify [`Credentials::password`] against them instead.
+    ///
+    /// Timing doesn't reveal the contents of `expected`, and reveals at most
+    /// a coarse bound on its length. (Currently this compares SHA-256 hashes
+    /// in constant time, so it reveals only whether `expected` is at least
+    /// 56 bytes. The implementation may change.)
+    ///
+    /// Pass `None` for an unknown user: this returns `false` after the same
+    /// work as for a wrong password, so response timing doesn't reveal
+    /// whether the user exists (beyond any difference in the caller's own
+    /// lookup).
+    pub fn verify_password(&self, expected: Option<&str>) -> bool {
         let actual = Sha256::digest(self.password());
-        bool::from(actual.ct_eq(&Sha256::digest(expected)))
+        let matches = actual.ct_eq(&Sha256::digest(expected.unwrap_or("")));
+        bool::from(matches & subtle::Choice::from(u8::from(expected.is_some())))
     }
 }
 
@@ -149,8 +165,14 @@ mod tests {
             .unwrap();
         assert_eq!(c.username(), "Aladdin");
         assert_eq!(c.password(), "open sesame");
-        assert!(c.verify_password("open sesame"));
-        assert!(!c.verify_password("open sesame!"));
+        assert!(c.verify_password(Some("open sesame")));
+        assert!(!c.verify_password(Some("open sesame!")));
+        assert!(!c.verify_password(None));
+        // An unknown user fails even when the supplied password is empty.
+        let c = Credentials::parse("Basic QWxhZGRpbjo=").unwrap().unwrap();
+        assert_eq!(c.password(), "");
+        assert!(c.verify_password(Some("")));
+        assert!(!c.verify_password(None));
         // RFC 7617 section 2.1: UTF-8 user-pass "test:123£".
         let c = Credentials::parse("Basic dGVzdDoxMjPCow==")
             .unwrap()

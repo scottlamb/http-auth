@@ -125,7 +125,7 @@ fn respond(config: &Config, log: &Mutex<Log>, method: &str, uri: &str, authoriza
                 None => return (401, vec![challenge.clone()]),
             };
             let outcome = c.and_then(|c| {
-                if c.username() == config.username && c.verify_password(config.password) { Ok(()) } else { Err(ServerError::BadCredentials) }
+                if c.verify_password((c.username() == config.username).then_some(config.password)) { Ok(()) } else { Err(ServerError::BadCredentials) }
             });
             log.outcomes.push(outcome.clone());
             match outcome {
