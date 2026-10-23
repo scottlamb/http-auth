@@ -14,6 +14,7 @@ env_logger = "0.9"
 libfuzzer-sys = "0.4"
 log = "0.4"
 nom = "7.0"
+iri-string = "0.7"
 
 [dependencies.http-auth]
 path = ".."
@@ -32,6 +33,12 @@ doc = false
 [[bin]]
 name = "parse_credentials"
 path = "fuzz_targets/parse_credentials.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "bearer_uri"
+path = "fuzz_targets/bearer_uri.rs"
 test = false
 doc = false
 

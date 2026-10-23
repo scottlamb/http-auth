@@ -93,16 +93,14 @@ pub mod basic;
 #[cfg_attr(docsrs, doc(cfg(feature = "digest-scheme")))]
 pub mod digest;
 
-#[cfg(feature = "server")]
-#[cfg_attr(docsrs, doc(cfg(feature = "server")))]
 pub mod bearer;
 
 mod table;
+mod uri;
 
 #[cfg(feature = "server")]
 mod server;
 
-#[cfg(any(feature = "digest-scheme", feature = "server"))]
 mod render;
 
 pub use parser::{parse_credentials, ChallengeParser};
