@@ -4,7 +4,7 @@
 
 Rust library for HTTP authentication. Parses challenge lists and responds
 to `Basic` and `Digest` challenges (client side), and issues challenges and
-verifies `Basic` and `Digest` credentials (server side, `server` feature).
+verifies `Basic`, `Digest`, and `Bearer` credentials (server side, `server` feature).
 
 HTTP authentication is described in the following documents and specifications:
 

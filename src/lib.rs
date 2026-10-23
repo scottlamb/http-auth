@@ -12,6 +12,10 @@
 //!     The 'Basic' HTTP Authentication Scheme
 //! *   [RFC 7616](https://datatracker.ietf.org/doc/html/rfc7616):
 //!     HTTP Digest Access Authentication
+//! *   [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750):
+//!     The OAuth 2.0 Authorization Framework: Bearer Token Usage
+//! *   [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728):
+//!     OAuth 2.0 Protected Resource Metadata
 //!
 //! This framework is primarily used with HTTP, as suggested by the name. It is
 //! also used by some other protocols such as RTSP.
@@ -89,26 +93,21 @@ pub mod basic;
 #[cfg_attr(docsrs, doc(cfg(feature = "digest-scheme")))]
 pub mod digest;
 
+#[cfg(feature = "server")]
+#[cfg_attr(docsrs, doc(cfg(feature = "server")))]
+pub mod bearer;
+
 mod table;
 
-#[cfg(all(
-    feature = "server",
-    any(feature = "basic-scheme", feature = "digest-scheme")
-))]
+#[cfg(feature = "server")]
 mod server;
 
-#[cfg(any(
-    feature = "digest-scheme",
-    all(feature = "server", feature = "basic-scheme")
-))]
+#[cfg(any(feature = "digest-scheme", feature = "server"))]
 mod render;
 
 pub use parser::{parse_credentials, ChallengeParser};
 
-#[cfg(all(
-    feature = "server",
-    any(feature = "basic-scheme", feature = "digest-scheme")
-))]
+#[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
 pub use server::{Challenge, ConfigError, CredentialsSource, ServerError};
 

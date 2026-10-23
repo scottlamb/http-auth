@@ -10,6 +10,7 @@ pub(crate) const C_QDTEXT: u8 = 2;
 pub(crate) const C_ESCAPABLE: u8 = 4;
 pub(crate) const C_OWS: u8 = 8;
 pub(crate) const C_ATTR: u8 = 16;
+pub(crate) const C_SCOPE_TOKEN: u8 = 32;
 
 static TABLE: [u8; 128] = build_table();
 
@@ -39,6 +40,9 @@ const fn build_table() -> [u8; 128] {
         }
         if is_attr(b) {
             classes |= C_ATTR;
+        }
+        if is_scope_token(b) {
+            classes |= C_SCOPE_TOKEN;
         }
         table[i] = classes;
         i += 1;
@@ -107,4 +111,10 @@ const fn is_attr(b: u8) -> bool {
 /// ```
 const fn is_ows(b: u8) -> bool {
     matches!(b, b' ' | b'\t')
+}
+
+/// Returns true if the byte is a `scope-token` character as in
+/// [RFC 6750 section 1.1](https://datatracker.ietf.org/doc/html/rfc6750#section-1.1).
+const fn is_scope_token(b: u8) -> bool {
+    matches!(b, 0x21 | 0x23..=0x5B | 0x5D..=0x7E)
 }

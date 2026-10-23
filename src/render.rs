@@ -14,6 +14,14 @@ pub(crate) fn is_quotable(s: &str) -> bool {
         .all(|b| (char_classes(b) & (C_QDTEXT | C_ESCAPABLE)) != 0)
 }
 
+/// Returns true if `s` consists only of bytes allowed in `Bearer`
+/// `error_description`, `error_uri`, and `resource_metadata` values.
+#[cfg(feature = "server")]
+pub(crate) fn is_bearer_param(s: &str) -> bool {
+    s.bytes()
+        .all(|b| b == b' ' || (char_classes(b) & crate::table::C_SCOPE_TOKEN) != 0)
+}
+
 /// Writes a challenge or credentials header value. Callers validate values.
 pub(crate) struct HeaderWriter {
     out: String,

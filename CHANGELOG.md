@@ -52,6 +52,8 @@
 *   `digest::Qop` now implements `PartialEq` and `Eq`.
 *   `digest::QopSet` constructors: `From<Qop>`, `BitOr`, `contains`,
     `is_empty`.
+*   `bearer::ChallengeBuilder`, `bearer::ErrorCode`, and `bearer::Credentials`
+    (server side).
 
 ### Changed
 
