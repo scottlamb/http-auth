@@ -256,6 +256,7 @@ impl<'i> sealed::Sealed<'i> for &'i http::HeaderValue {
 }
 
 /// Validates a realm value.
+#[cfg(any(feature = "basic-scheme", feature = "digest-scheme"))]
 pub(crate) fn check_realm(realm: &str) -> Result<(), ConfigError> {
     if crate::render::is_quotable(realm) {
         Ok(())

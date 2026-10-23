@@ -3,6 +3,7 @@
 
 //! Writes `scheme k=v, k="v", k*=UTF-8''v` header values.
 
+#[cfg(any(feature = "digest-scheme", feature = "server"))]
 use crate::is_token;
 #[cfg(feature = "digest-scheme")]
 use crate::table::C_ATTR;
@@ -15,11 +16,13 @@ pub(crate) fn is_quotable(s: &str) -> bool {
 }
 
 /// Writes a challenge or credentials header value. Callers validate values.
+#[cfg(any(feature = "digest-scheme", feature = "server"))]
 pub(crate) struct HeaderWriter {
     out: String,
     has_params: bool,
 }
 
+#[cfg(any(feature = "digest-scheme", feature = "server"))]
 impl HeaderWriter {
     pub(crate) fn new(scheme: &str) -> Self {
         debug_assert!(is_token(scheme));

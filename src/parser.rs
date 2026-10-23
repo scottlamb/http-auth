@@ -749,6 +749,11 @@ fn token68_end(input: &str, start: usize) -> Option<usize> {
     (after.is_empty() || after.starts_with(',')).then_some(end)
 }
 
+/// Returns true if `s` is a complete `b64token` (RFC 6750 section 2.1).
+pub(crate) fn is_b64token(s: &str) -> bool {
+    token68_end(s, 0) == Some(s.len())
+}
+
 /// Returns the value of a hex digit.
 #[cfg(all(feature = "server", feature = "digest-scheme"))]
 fn hex_val(b: u8) -> Option<u8> {

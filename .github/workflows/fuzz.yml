@@ -38,6 +38,8 @@ jobs:
             seeds: challenges
           - target: parse_credentials
             seeds: credentials
+          - target: bearer_uri
+            seeds: uris
           - target: digest_response
             seeds: credentials
     env:
